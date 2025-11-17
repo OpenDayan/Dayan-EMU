@@ -1,10 +1,16 @@
 #include "rvtng-intf.h"
 #include "exec_unit.hpp"
 #include "lsu.hpp"
+#include "mat.hpp"
+#include "thread_safe_queue.h"
 #include <thread>
+#include <optional>
+#include <mutex>
 
 int main(int argc, char** argv) {
     int fdMsg, fdInst;
+    // 注意 fdMsg 存在竞争问题，例化一个锁避免相关问题出现。
+    std::mutex fdMsgMutex;
     // 创建 URAM
     uint8_t* uram = (uint8_t *)backend_get_shm_ptr("/uram_shm_0", 1024 * 1024);
     // 创建 QEMU 子进程
@@ -29,8 +35,9 @@ int main(int argc, char** argv) {
     // 创建顶层
     auto top = RVTNG::exec_unit_t();
     // 绑定顶层提交函数
-    top.register_commit_callback([fdMsg](const rvt_commit_t* pkg) {
+    top.register_commit_callback([fdMsg, &fdMsgMutex](const rvt_commit_t* pkg) {
         printf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
+        std::lock_guard<std::mutex> lock(fdMsgMutex);
         backend_instruction_commit(fdMsg, 0, pkg);
     });
     // 顶层提交 Scoreboard
@@ -39,7 +46,9 @@ int main(int argc, char** argv) {
         sb.enqueue(entry);
     });
     // 创建 LSU
-    auto lsu = RVTNG::lsu_t(&top, uram, fdMsg);
+    auto lsu = RVTNG::lsu_t(&top, uram, fdMsg, &fdMsgMutex);
+    // 创建 MAT
+    auto mat = RVTNG::mat_t(&top, uram);
     // 创建 Scoreboard
     top.register_issue_callback([&top, &sb](const rvt_pack_t* inst) {
         bool is_sb = (inst->inst & 0xfe000000) == 0x0e000000;
@@ -47,13 +56,14 @@ int main(int argc, char** argv) {
         rvt_commit_t cmt_pack;
         cmt_pack.timestamp = inst->timestamp;
         cmt_pack.rd = (inst->inst >> 7) & 0x1f;
-        bool v = sb.try_dequeue(cmt_pack.data);
-        if(!v) cmt_pack.data = 0;
+        auto p = sb.try_dequeue();
+        printf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
+        cmt_pack.data = p.value_or(0ul);
         top.commit(&cmt_pack);
-        printf("Scoreboard: Execute scoreboard Instruction %x!\n",(uint32_t)inst->inst);
     });
     // 创建子执行线程
     std::thread lsu_exec(&RVTNG::lsu_t::execute, &lsu);
+    std::thread mat_exec(&RVTNG::mat_t::execute, &mat);
     // 主要循环体
     while(1) {
         // 取指令

@@ -33,14 +33,14 @@ struct lsu_tcsr_t {
 class lsu_t: exec_unit_t {
 public:
     void issue(const rvt_pack_t* inst) override;
-    lsu_t(exec_unit_t* parrent, uint8_t *uram, int fdMsg);
+    lsu_t(exec_unit_t* parrent, uint8_t *uram, int fdMsg, std::mutex *fdMsgMutex);
     void execute(void);  // 独占循环
 
 protected:
     // 执行一条 DMA 指令
     void execute_dma_once(lsu_tcsr_t* tcsr, uint64_t src, uint64_t dst, bool src_dram, bool dst_dram);
     // 私有指令队列
-    SPSCQueue<rvt_pack_t, 32> inst_queue;
+    MPMCQueue<rvt_pack_t, 128> inst_queue;
     // 私有 LSU buffer
     uint8_t* lsu_buffer;
     // 私有 TCSR
@@ -51,6 +51,8 @@ protected:
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
         20
     };
+    // 锁
+    std::mutex* fdMsgMutex;
     // 调用 dram read 时使用的掩码
     int fdMsg;
     // uram buffer

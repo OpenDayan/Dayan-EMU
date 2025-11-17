@@ -18,11 +18,14 @@ namespace RVTNG {
                                 lsu_buffer[block * 64 + transfer] = tcsr->paddingValue[transfer % 8];
                             }
                         } else if(src_dram) {
-                            backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64,
+                            {
+                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
+                                backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64,
                               src + block * tcsr->inBlockStride
                                   + dim0  * tcsr->inDim0Stride
                                   + dim1  * tcsr->inDim1Stride
                                   + dim2  * tcsr->inDim2Stride);
+                            }
                             for(uint64_t transfer = tcsr->requestPadding + 1; transfer < 64; transfer++) {
                                 lsu_buffer[block * 64 + transfer] = tcsr->paddingValue[transfer % 8];
                             }
@@ -57,6 +60,7 @@ namespace RVTNG {
                                 }
                             }
                             if(dst_dram) {
+                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
                                 backend_dram_write(fdMsg, (char*)transfer_buf, 64,
                                 dst + (block + transpose) * tcsr->outBlockStride
                                     + dim0  * tcsr->outDim0Stride
@@ -80,7 +84,7 @@ namespace RVTNG {
         }
     }
 
-    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, int fdMsg):fdMsg(fdMsg), uram(uram) {
+    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, int fdMsg, std::mutex* fdMsgMutex):fdMsgMutex(fdMsgMutex), fdMsg(fdMsg), uram(uram) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &lsu_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);

@@ -18,7 +18,7 @@ protected:
     // 掩码寄存器
     uint8_t *mask;
     // 指令队列0
-    SPSCQueue<rvt_pack_t, 32> inst_queue;
+    MPMCQueue<rvt_pack_t, 32> inst_queue;
     // 指令队列1
     std::vector<rvt_pack_t> inst_queue_block;
     // 其它状态变量及取指指针

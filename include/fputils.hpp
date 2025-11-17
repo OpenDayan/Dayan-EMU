@@ -35,25 +35,26 @@ static inline uint8_t getLower(uint16_t a) {
     return a & 0xff;
 }
 
+union fp32_int32 {
+    float f;
+    uint32_t bits;
+};
+
 static inline uint16_t FP32ToBF16(float a) {
-    uint32_t aI = *(int*)&a;
-    return (aI >> 16) & 0xffff;
+    fp32_int32 u;
+    u.f = a;
+    return (u.bits >> 16) & 0xffff;
 }
 
 static inline float BF16ToFP32(uint16_t a) {
-    uint32_t e = a << 16;
-    float aF = *(float*)&e;
-    return aF;
+    fp32_int32 u;
+    u.bits = a << 16;
+    return u.f;
 }
 
 static inline float BF16Clip(float a) {
     return BF16ToFP32(FP32ToBF16(a));
 }
-
-union fp32_int32 {
-    float f;
-    uint32_t bits;
-};
 
 static inline uint32_t FP32ToSExp(float a) {
     fp32_int32 f;
@@ -192,7 +193,7 @@ inline uint8_t FP32ToFP8(float value) {
 typedef int (*resultHandlerT)(int m, int n, float);
 
 // Standard FP8 Matrix Multiplication Impl.
-void CalcFP8MatMul(uint8_t* a, uint8_t* b, resultHandlerT c, int tM, int tN, int tK) {
+static inline void CalcFP8MatMul(uint8_t* a, uint8_t* b, resultHandlerT c, int tM, int tN, int tK) {
     float A[tK];
     for(int m = 0 ; m < tM; m ++) {
         // A Array
@@ -209,3 +210,36 @@ void CalcFP8MatMul(uint8_t* a, uint8_t* b, resultHandlerT c, int tM, int tN, int
         }
     }
 }
+
+// Standard BF16 Matrix Multiplication Impl.
+static inline void CalcBF16MatMul(uint16_t* a, uint16_t* b, resultHandlerT c, int tM, int tN, int tK) {
+    float A[tK];
+    for(int m = 0 ; m < tM; m ++) {
+        // A Array
+        for(int k = 0; k < tK; k ++) {
+            A[k] = BF16ToFP32(a[m * tK + k]);
+        }
+        for(int n = 0 ; n < tN ; n ++) {
+            float acc = 0.f;
+            for(int k = 0; k < tK; k ++) {
+                acc += A[k] * BF16ToFP32(b[n * tK + k]);
+            }
+            // c[m * tN] = acc;
+            if(c(m, n, acc)) return;
+        }
+    }
+}
+
+// FP32 快速点积
+template <std::size_t LEN>
+inline float fp32_dot_product(float sum, const float* a, const float* b) {
+    static_assert(LEN > 0, "Vector length LEN must be greater than 0.");
+
+    #pragma GCC ivdep
+    for (std::size_t i = 0; i < LEN; ++i) {
+        sum += a[i] * b[i];
+    }
+
+    return sum;
+}
+
