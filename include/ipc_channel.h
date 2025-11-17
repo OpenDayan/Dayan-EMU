@@ -1,6 +1,10 @@
 #ifndef IPC_CHANNEL_H
 #define IPC_CHANNEL_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -78,7 +82,7 @@ static inline int rvt_socket_push(int sockfd, uint64_t data) {
     ssize_t sent;
     
     /* 阻塞式发送，确保发送完整的8字节 */
-    while (total_sent < sizeof(uint64_t)) {
+    while (total_sent < (ssize_t)sizeof(uint64_t)) {
         sent = send(sockfd, (char*)&data + total_sent, 
                    sizeof(uint64_t) - total_sent, 0);
         if (sent <= 0) {
@@ -96,7 +100,7 @@ static inline int rvt_socket_pop(int sockfd, uint64_t* data) {
     ssize_t received;
     
     /* 阻塞式接收，确保接收完整的8字节 */
-    while (total_received < sizeof(uint64_t)) {
+    while (total_received < (ssize_t)sizeof(uint64_t)) {
         received = recv(sockfd, (char*)data + total_received, 
                        sizeof(uint64_t) - total_received, 0);
         if (received <= 0) {
@@ -112,5 +116,9 @@ static inline int rvt_socket_pop(int sockfd, uint64_t* data) {
 static inline void rvt_cleanup_socket(const char* socket_path) {
     unlink(socket_path);
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // IPC_CHANNEL_H

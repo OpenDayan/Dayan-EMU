@@ -29,7 +29,6 @@ extern "C" {
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include "ipc_channel.h"
-#include "blocking-queue.h"
 
 typedef struct {
 	uint64_t inst;
@@ -44,9 +43,6 @@ typedef struct {
 	uint64_t data;
     uint64_t timestamp;
 } rvt_commit_t;
-
-DEFINE_BLOCKING_QUEUE(rvt_pack_t, RVTPackQ)
-DEFINE_BLOCKING_QUEUE(rvt_commit_t, RVTCommitQ)
 
 // Frontend Service API
 int frontend_dram_read_service(char *buf, size_t size, off_t addr);
@@ -281,7 +277,7 @@ static inline int backend_instruction_fetch(int fdInst, int coreIdx, rvt_pack_t*
     rvt_socket_pop(fdInst, &(pkg->timestamp));
     return 1;
 }
-static inline int backend_instruction_commit(int fdMsg, int coreIdx, rvt_commit_t* pkg) {
+static inline int backend_instruction_commit(int fdMsg, int coreIdx, const rvt_commit_t* pkg) {
     rvt_socket_push(fdMsg, 0x0);
     rvt_socket_push(fdMsg, coreIdx);
     rvt_socket_push(fdMsg, pkg->rd);

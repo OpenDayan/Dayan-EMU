@@ -16,8 +16,8 @@ AR := $(CROSS_COMPILE)ar
 # 编译选项
 CFLAGS ?= -std=c11 -Wall -Wextra -O2 -g
 CXXFLAGS ?= -std=c++20 -Wall -Wextra -O2 -g
-CPPFLAGS ?= -I./include -I./emu -I./main -I./utils -I${BOOST_ROOT}
-LDFLAGS ?= -lm -lpthread -L${BOOST_ROOT}/stage/lib/
+CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
+LDFLAGS ?= -lm -lpthread
 
 # 导出变量到子 Makefile
 export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE
@@ -50,6 +50,7 @@ clean:
 		$(MAKE) -C $$dir clean; \
 	done
 	@rm -rf $(BUILD_DIR)
+	@rm -rf $(OUTPUT_DIR)
 	@echo "Clean completed"
 
 distclean: clean
