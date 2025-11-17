@@ -31,18 +31,19 @@ namespace RVTNG {
                                 if(transfer <= tcsr->requestPadding) {
                                     *(uint64_t*)(lsu_buffer + block * 64 + transfer) =
                                     *(uint64_t*)(uram +
-                                    swizzle_addr(src +
+                                    swizzle_addr(src + transfer +
                                     block * tcsr->inBlockStride
                                   + dim0  * tcsr->inDim0Stride
                                   + dim1  * tcsr->inDim1Stride
                                   + dim2  * tcsr->inDim2Stride, tcsr->uramReadSwizzleMBS));
+                                } else {
+                                    *(uint64_t*)(lsu_buffer + block * 64 + transfer) = *(uint64_t*)tcsr->paddingValue;
                                 }
                             }
                         }
                     }
-                    // 拷贝 lsu buffer 数据到目标重点，同时进行转置。
+                    // 拷贝 lsu buffer 数据到目标终点，同时进行转置。
                     for(uint64_t block = 0; block <= real_padding; block += transpose_size) {
-                        uint8_t* cur_lsu_buffer = lsu_buffer + block * 64;
                         for(uint64_t transpose = 0; transpose < transpose_size; transpose++) {
                             // View lsu buffer as [transpose_size][transpose_size][elem_size]
                             // y = transfer / elem_size; x = transfer % elem_size;
@@ -52,9 +53,7 @@ namespace RVTNG {
                             for(uint64_t y = 0; y < transpose_size; y++) {
                                 for(uint64_t x = 0; x < elem_size; x++) {
                                     transfer_buf[y * elem_size + x] = 
-                                    cur_lsu_buffer[y * transpose_size * elem_size +
-                                                   transpose * elem_size +
-                                                   x];
+                                    lsu_buffer[(block + y) * 64 + transpose * elem_size + x];
                                 }
                             }
                             if(dst_dram) {

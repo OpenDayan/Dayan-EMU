@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
         return -1;
     }
     else if (qemuPid == 0) {
-        if(argc == 0) {// Default debug mode.
+        if(argc <= 1) {// Default debug mode.
             execlp("/workspace/npu-qemu/build/dl-riscv64", "QEMU_THREAD", "-monitor", "null",
             "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
             "-machine", "rvtng-v0", "-nographic", "-m", "4096", "-S", "-s", NULL);
