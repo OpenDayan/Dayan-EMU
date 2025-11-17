@@ -8,7 +8,7 @@ OBJ_FILES := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(wildcard $(SRC_DIR)/*.
 OBJ_FILES += $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(wildcard $(SRC_DIR)/*.cpp))
 
 # 包含目录
-INCLUDES := -I./include -I../include -I../emu/include -I../utils/include
+INCLUDES := -I./include -I../include
 
 # 默认目标
 all: $(OBJ_FILES)

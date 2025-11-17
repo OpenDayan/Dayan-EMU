@@ -67,7 +67,7 @@ namespace RVTNG {
                                 for(int transfer = 0; transfer < 64; transfer += 8) {
                                     *(uint64_t*)(uram +
                                         swizzle_addr(
-                                dst + (block + transpose) * tcsr->outBlockStride
+                                dst + transfer + (block + transpose) * tcsr->outBlockStride
                                     + dim0  * tcsr->outDim0Stride
                                     + dim1  * tcsr->outDim1Stride
                                     + dim2  * tcsr->outDim2Stride, tcsr->uramWriteSwizzleMBS)) =
@@ -84,6 +84,9 @@ namespace RVTNG {
     lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, int fdMsg):fdMsg(fdMsg), uram(uram) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &lsu_t::issue);
+        this->register_commit_callback(parrent, &exec_unit_t::commit);
+        this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+        lsu_buffer = new uint8_t[512 * 64];
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     void lsu_t::issue(const rvt_pack_t* inst) {
@@ -103,37 +106,53 @@ namespace RVTNG {
             // Decode
             bool is_dma_tcsr_write = (inst.inst & 0xfe004000) == 0x04000000;
             bool is_dma_tcsr_read  = (inst.inst & 0xfe004000) == 0x04004000;
-            bool is_dma_sb   = (inst.inst & 0xfe000000) == 0x0c000000;
+            bool is_dma_sb_produce = (inst.inst & 0xfe004000) == 0x0c000000;
+            bool is_dma_sb_bar     = (inst.inst & 0xfe004000) == 0x0c004000;
             if(is_dma_tcsr_write | is_dma_tcsr_read) {
                 uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
+                printf("LSU: tcsr read write %d:\n", tcsr_id);
                 if(tcsr_id > 8 * 32) {
-                    return;
+                    printf("* Illgal id.\n");
+                    continue;
                 }
                 uint64_t* _tcsr = (uint64_t*) &this->tcsr;
                 if(is_dma_tcsr_write) {
                     if((tcsr_id % 32) != 31)
                         _tcsr[tcsr_id] = inst.rd & ((1 << this->tcsr_width[tcsr_id & 0x1f]) - 1);
                     this->tcsr[tcsr_id / 32].checksum += 1;
+                    printf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
                 } else {
                     rvt_commit_t cmt_pack;
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                     cmt_pack.data = _tcsr[tcsr_id];
                     commit(&cmt_pack);
+                    printf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
                 }
-                return;
+                continue;
             }
-            if(is_dma_sb) {
+            if(is_dma_sb_produce) {
+                printf("LSU: scoreboard produce %lx:\n", inst.rd);
                 scoreboard(inst.rd);
-                return;
+                continue;
+            }
+            if(is_dma_sb_bar) {
+                rvt_commit_t cmt_pack;
+                cmt_pack.timestamp = inst.timestamp;
+                cmt_pack.rd = (inst.inst >> 7) & 0x1f;
+                cmt_pack.data = inst.rd;
+                printf("LSU: scoreboard bar %lx:\n", cmt_pack.rd);
+                commit(&cmt_pack);
             }
             // DMA 指令执行
             {
                 uint64_t group = (inst.inst >> 20) & 0x7;
                 bool src_is_dram = (inst.inst >> 13) & 0x1;
                 bool dst_is_dram = (inst.inst >> 12) & 0x1;
-                execute_dma_once(&this->tcsr[group], inst.rs1, inst.rd, src_is_dram, dst_is_dram);
-                return;
+                uint64_t src = src_is_dram ? inst.rs1 : (inst.rs1 & 0xfffff);
+                uint64_t dst = dst_is_dram ? inst.rd  : (inst.rd  & 0xfffff);
+                execute_dma_once(&this->tcsr[group], src, dst, src_is_dram, dst_is_dram);
+                continue;
             }
         }
     }

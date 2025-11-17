@@ -14,8 +14,8 @@ CXX := $(CROSS_COMPILE)g++
 AR := $(CROSS_COMPILE)ar
 
 # 编译选项
-CFLAGS ?= -std=c11 -Wall -Wextra -O2 -g
-CXXFLAGS ?= -std=c++20 -Wall -Wextra -O2 -g
+CFLAGS ?= -std=c11 -Wall -Wextra -O0 -g
+CXXFLAGS ?= -std=c++20 -Wall -Wextra -O0 -g
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
 LDFLAGS ?= -lm -lpthread
 

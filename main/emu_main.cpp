@@ -1,6 +1,7 @@
 #include "rvtng-intf.h"
 #include "exec_unit.hpp"
 #include "lsu.hpp"
+#include <thread>
 
 int main() {
     int fdMsg, fdInst;
@@ -24,6 +25,7 @@ int main() {
     auto top = RVTNG::exec_unit_t();
     // 绑定顶层提交函数
     top.register_commit_callback([fdMsg](const rvt_commit_t* pkg) {
+        printf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
         backend_instruction_commit(fdMsg, 0, pkg);
     });
     // 顶层提交 Scoreboard
@@ -45,11 +47,14 @@ int main() {
         top.commit(&cmt_pack);
         printf("Scoreboard: Execute scoreboard Instruction %x!\n",(uint32_t)inst->inst);
     });
+    // 创建子执行线程
+    std::thread lsu_exec(&RVTNG::lsu_t::execute, &lsu);
     // 主要循环体
     while(1) {
         // 取指令
         rvt_pack_t inst;
         int count = backend_instruction_fetch(fdInst, 0, &inst);
         if(count) top.issue(&inst);
+        else usleep(100); // 10kHz
     }
 }

@@ -17,14 +17,13 @@ private:
     std::vector<commit_call_back_f> commit_cb;
     std::vector<scoreboard_call_back_f> scoreboard_cb;
     std::vector<issue_call_back_f> issue_cb;
-protected:
-    void scoreboard(uint64_t value) {
+public:
+    void scoreboard(const uint64_t value) {
         for (const auto& cb : scoreboard_cb) {
             cb(value);
         }
     }
-public:
-    void commit(rvt_commit_t* inst) {
+    void commit(const rvt_commit_t* inst) {
         for (const auto& cb : commit_cb) {
             cb(inst);
         }
