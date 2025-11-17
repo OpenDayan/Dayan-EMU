@@ -3,7 +3,7 @@
 #include "lsu.hpp"
 #include <thread>
 
-int main() {
+int main(int argc, char** argv) {
     int fdMsg, fdInst;
     // 创建 URAM
     uint8_t* uram = (uint8_t *)backend_get_shm_ptr("/uram_shm_0", 1024 * 1024);
@@ -13,10 +13,15 @@ int main() {
         return -1;
     }
     else if (qemuPid == 0) {
-        execlp("/workspace/npu-qemu/build/dl-riscv64", "QEMU_THREAD", "-monitor", "null",
-        "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
-        "-machine", "rvtng-v0", "-nographic", "-m", "4096", "-S", "-s", NULL);
-        exit(EXIT_FAILURE);
+        if(argc == 0) {// Default debug mode.
+            execlp("/workspace/npu-qemu/build/dl-riscv64", "QEMU_THREAD", "-monitor", "null",
+            "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
+            "-machine", "rvtng-v0", "-nographic", "-m", "4096", "-S", "-s", NULL);
+            exit(EXIT_FAILURE);
+        } else {
+            execvp(argv[1], &argv[1]);
+            exit(EXIT_FAILURE);
+        }
     }
     // 父进程创建 server socket
     backend_init((int*)&fdMsg, (int*)&fdInst);
