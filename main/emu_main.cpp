@@ -2,6 +2,7 @@
 #include "exec_unit.hpp"
 #include "lsu.hpp"
 #include "mat.hpp"
+#include "vec.hpp"
 #include "thread_safe_queue.h"
 #include <thread>
 #include <optional>
@@ -49,6 +50,8 @@ int main(int argc, char** argv) {
     auto lsu = RVTNG::lsu_t(&top, uram, fdMsg, &fdMsgMutex);
     // 创建 MAT
     auto mat = RVTNG::mat_t(&top, uram);
+    // 创建 VEC
+    auto vec = RVTNG::vec_t(&top, 16);
     // 创建 Scoreboard
     top.register_issue_callback([&top, &sb](const rvt_pack_t* inst) {
         bool is_sb = (inst->inst & 0xfe000000) == 0x0e000000;
@@ -64,6 +67,7 @@ int main(int argc, char** argv) {
     // 创建子执行线程
     std::thread lsu_exec(&RVTNG::lsu_t::execute, &lsu);
     std::thread mat_exec(&RVTNG::mat_t::execute, &mat);
+    std::thread vec_exec(&RVTNG::vec_t::execute, &vec);
     // 主要循环体
     while(1) {
         // 取指令
