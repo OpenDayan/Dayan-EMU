@@ -127,11 +127,12 @@ namespace RVTNG {
                     float sum = *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS));
                     for(ulong subK = 0; subK < 128; subK += 16) {
                         if(subK >= leftK) break;
-                        sum += fp32_dot_product<16>(sum, A + subK, B + subK);
+                        sum = fp32_dot_product<16>(sum, A + subK, B + subK);
                     }
                     *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) = sum;
                 }
             }
         }
+        printf("MAT: 0x%05lx = 0x%05lx @ 0x%05lx\n", c, a, b);
     }
 }

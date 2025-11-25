@@ -1,5 +1,7 @@
 #include "lsu.hpp"
 #include "swizzle.hpp"
+#include <atomic>
+#include <thread>
 
 namespace RVTNG {
     void lsu_t::execute_dma_once(lsu_tcsr_t* tcsr, uint64_t src, uint64_t dst, bool src_dram, bool dst_dram) {
@@ -19,12 +21,12 @@ namespace RVTNG {
                             }
                         } else if(src_dram) {
                             {
-                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
-                                backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64,
-                              src + block * tcsr->inBlockStride
+                                uint64_t addr = src + block * tcsr->inBlockStride
                                   + dim0  * tcsr->inDim0Stride
                                   + dim1  * tcsr->inDim1Stride
-                                  + dim2  * tcsr->inDim2Stride);
+                                  + dim2  * tcsr->inDim2Stride;
+                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
+                                backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64, addr);
                             }
                             for(uint64_t transfer = tcsr->requestPadding + 1; transfer < 64; transfer++) {
                                 lsu_buffer[block * 64 + transfer] = tcsr->paddingValue[transfer % 8];
@@ -32,13 +34,12 @@ namespace RVTNG {
                         } else {
                             for(uint64_t transfer = 0; transfer < 64; transfer += 8) {
                                 if(transfer <= tcsr->requestPadding) {
-                                    *(uint64_t*)(lsu_buffer + block * 64 + transfer) =
-                                    *(uint64_t*)(uram +
-                                    swizzle_addr(src + transfer +
+                                uint64_t addr = swizzle_addr(src + transfer +
                                     block * tcsr->inBlockStride
                                   + dim0  * tcsr->inDim0Stride
                                   + dim1  * tcsr->inDim1Stride
-                                  + dim2  * tcsr->inDim2Stride, tcsr->uramReadSwizzleMBS));
+                                  + dim2  * tcsr->inDim2Stride, tcsr->uramReadSwizzleMBS);
+                                    *(uint64_t*)(lsu_buffer + block * 64 + transfer) = *(uint64_t*)(uram + addr);
                                 } else {
                                     *(uint64_t*)(lsu_buffer + block * 64 + transfer) = *(uint64_t*)tcsr->paddingValue;
                                 }
@@ -60,21 +61,20 @@ namespace RVTNG {
                                 }
                             }
                             if(dst_dram) {
-                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
-                                backend_dram_write(fdMsg, (char*)transfer_buf, 64,
-                                dst + (block + transpose) * tcsr->outBlockStride
+                                uint64_t addr = dst + (block + transpose) * tcsr->outBlockStride
                                     + dim0  * tcsr->outDim0Stride
                                     + dim1  * tcsr->outDim1Stride
-                                    + dim2  * tcsr->outDim2Stride);
+                                    + dim2  * tcsr->outDim2Stride;
+                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
+                                backend_dram_write(fdMsg, (char*)transfer_buf, 64, addr);
                             } else {
                                 for(int transfer = 0; transfer < 64; transfer += 8) {
-                                    *(uint64_t*)(uram +
-                                        swizzle_addr(
+                                    uint64_t addr = swizzle_addr(
                                 dst + transfer + (block + transpose) * tcsr->outBlockStride
                                     + dim0  * tcsr->outDim0Stride
                                     + dim1  * tcsr->outDim1Stride
-                                    + dim2  * tcsr->outDim2Stride, tcsr->uramWriteSwizzleMBS)) =
-                                    *(uint64_t*)(transfer_buf + transfer);
+                                    + dim2  * tcsr->outDim2Stride, tcsr->uramWriteSwizzleMBS);
+                                    *(uint64_t*)(uram + addr) = *(uint64_t*)(transfer_buf + transfer);
                                 }
                             }
                         }
@@ -82,6 +82,7 @@ namespace RVTNG {
                 }
             }
         }
+        printf("LSU: 0x%08lx <- 0x%08lx\n", dst, src);
     }
 
     lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, int fdMsg, std::mutex* fdMsgMutex):fdMsgMutex(fdMsgMutex), fdMsg(fdMsg), uram(uram) {
@@ -155,6 +156,7 @@ namespace RVTNG {
                 uint64_t src = src_is_dram ? inst.rs1 : (inst.rs1 & 0xfffff);
                 uint64_t dst = dst_is_dram ? inst.rd  : (inst.rd  & 0xfffff);
                 execute_dma_once(&this->tcsr[group], src, dst, src_is_dram, dst_is_dram);
+                std::atomic_thread_fence(std::memory_order_release);
                 continue;
             }
         }

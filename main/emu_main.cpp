@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     auto top = RVTNG::exec_unit_t();
     // 绑定顶层提交函数
     top.register_commit_callback([fdMsg, &fdMsgMutex](const rvt_commit_t* pkg) {
-        printf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
+        // printf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
         std::lock_guard<std::mutex> lock(fdMsgMutex);
         backend_instruction_commit(fdMsg, 0, pkg);
     });
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
         cmt_pack.timestamp = inst->timestamp;
         cmt_pack.rd = (inst->inst >> 7) & 0x1f;
         auto p = sb.try_dequeue();
-        printf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
+        if(p != std::nullopt) printf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
         cmt_pack.data = p.value_or(0ul);
         top.commit(&cmt_pack);
     });
