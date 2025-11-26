@@ -14,10 +14,10 @@ CXX := $(CROSS_COMPILE)g++
 AR := $(CROSS_COMPILE)ar
 
 # 编译选项
-CFLAGS ?= -std=c11 -Wall -Wextra -O0 -g
-CXXFLAGS ?= -std=c++20 -Wall -Wextra -O0 -g
+CFLAGS ?= -std=c11 -Wall -Wextra -O0 -g -fsanitize=address
+CXXFLAGS ?= -std=c++20 -Wall -Wextra -O0 -g -fsanitize=address
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
-LDFLAGS ?= -lm -lpthread
+LDFLAGS ?= -lm -lpthread -fsanitize=address
 
 # 导出变量到子 Makefile
 export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE

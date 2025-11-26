@@ -37,10 +37,32 @@ struct vec_tcsr_t {
 };
 
 #define RESQ_SIZE 16
+struct ResQ {
+    std::array<std::vector<int>, 2> buffer;
+
+    int lane_width;
+    int head[2] = {};
+
+    explicit ResQ(int lane_width) : lane_width(lane_width) {
+        for (size_t vb = 0; vb < 2; ++vb)
+            buffer[vb].resize(RESQ_SIZE * lane_width);
+    }
+
+    void enqueue(int vb, int result) {
+        buffer[vb][head[vb]] = result;
+        head[vb] = (head[vb] + 1) % RESQ_SIZE;
+    }
+
+    int get(int vb, int index){
+        int realIndex = (head[vb] - index + RESQ_SIZE) % RESQ_SIZE;
+        return buffer[vb][realIndex];
+    }
+};
+
 class vec_t: exec_unit_t {
 public:
     void issue(const rvt_pack_t* inst) override;
-    vec_t(exec_unit_t* parrent, ulong lane_width);
+    vec_t(exec_unit_t* parrent, uint8_t *uram, ulong lane_width);
     void execute(void);  // 独占循环
 
 protected:
@@ -62,10 +84,12 @@ protected:
         8, 8, 28, 28, 24, 28, 8, 8, 8, 24, 0, 0, 0, 0, 0, 0, 0, 0, 
         20
     };
+    // uram buffer
+    uint8_t* uram;
     // 存储 lane 宽度
     ulong lane_width;
     // resQ[vb][idx][lane]
-    std::vector<std::vector<std::vector<uint32_t>>> resQ;
+    ResQ resQ;
 
     enum {OUTER_MODE, INNER_MODE};
     bool mode;

@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     // 创建 MAT
     auto mat = RVTNG::mat_t(&top, uram);
     // 创建 VEC
-    auto vec = RVTNG::vec_t(&top, 16);
+    auto vec = RVTNG::vec_t(&top, uram, 16);
     // 创建 Scoreboard
     top.register_issue_callback([&top, &sb](const rvt_pack_t* inst) {
         bool is_sb = (inst->inst & 0xfe000000) == 0x0e000000;
