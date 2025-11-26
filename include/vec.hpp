@@ -55,6 +55,7 @@ struct ResQ {
 
     int get(int vb, int index){
         int realIndex = (head[vb] - index + RESQ_SIZE) % RESQ_SIZE;
+        // printf("%d %d %d %d\n", vb, head[vb], index, realIndex);
         return buffer[vb][realIndex];
     }
 };

@@ -19,12 +19,13 @@ namespace RVTNG {
         };
         uint8_t vb = (inst.inst >> 25) & 0x1;
         int vrs1 = resQ->get((inst.inst >> 11) & 0x1, (inst.inst >> 7) & 0xf);
-        int vrs2 = resQ->get((inst.inst >> 11) & 0x1, (inst.inst >> 15) & 0xf);
+        int vrs2 = resQ->get((inst.inst >> 19) & 0x1, (inst.inst >> 15) & 0xf);
         uint8_t op = (inst.inst >> 12) & 0x7;
 
         int result;
         switch (op) {
         case 0: // TODO:
+            printf("VEC: add \n\t vrs1 %x, vrs2 %x\n", vrs1, vrs2);
             result = vrs1 + vrs2;
             resQ->enqueue(vb, result);
             break;
@@ -35,13 +36,13 @@ namespace RVTNG {
     void v_load_exec_once(ResQ* resQ, rvt_pack_t inst, uint64_t addr, uint64_t swizzleMBS, uint8_t* uram) {
         uint8_t vb = (inst.inst >> 25) & 0x1;
         uint32_t data = *(uint32_t *)(uram + swizzle_addr(addr, swizzleMBS));
-        printf("VEC: load \n\t swizzleAddr %lx, rdata: %x\n", swizzle_addr(addr, swizzleMBS), data);
+        printf("VEC: load \n\t swizzleAddr %lx, rdata %x\n", swizzle_addr(addr, swizzleMBS), data);
         resQ->enqueue(vb, data);
     }
     void v_store_exec_once(ResQ* resQ, rvt_pack_t inst, uint64_t addr, uint64_t swizzleMBS, uint8_t* uram) {
         uint8_t vb = (inst.inst >> 19) & 0x1; // vrs2的最高位
         int vrs2 = resQ->get(vb, (inst.inst >> 15) & 0xf);
-        printf("VEC: store \n\t swizzleAddr %lx, rdata: %x\n", swizzle_addr(addr, swizzleMBS), vrs2);
+        printf("VEC: store \n\t swizzleAddr %lx, wdata %x\n", swizzle_addr(addr, swizzleMBS), vrs2);
         *(uint32_t *)(uram + swizzle_addr(addr, swizzleMBS)) = (uint32_t)vrs2;
     }
     void vec_t::exec_once(rvt_pack_t inst) {
@@ -59,7 +60,7 @@ namespace RVTNG {
             tcsr[0].swizzleMBS0, tcsr[0].swizzleMBS1,
             tcsr[0].swizzleMBS2, tcsr[0].swizzleMBS3
         };
-        uint64_t addr = rs + curBlock * 4 + curDim0 * vstride_dim0[sel] + curDim1 * vstride_dim1[sel];
+        uint64_t addr = rs + curBlock * 4 + curDim0 * vstride_dim0[sel] + curDim1 * vstride_dim1[sel]; // TODO: check
         
         switch ((inst.inst >> 26) & 0b111111) {
             case VV_INT32: {
@@ -163,15 +164,15 @@ namespace RVTNG {
                     if(isCsr) {
                         printf("VEC: block ended!\n");
                         // 执行vec指令
-                        for(int i = 0; i < dim1; i++) {
-                            for(int j =0; j < dim0; j++) {
-                                for(int k = 0; k < block; k++) {
+                        for(int i = 0; i <= dim1; i++) {
+                            for(int j =0; j <= dim0; j++) {
+                                for(int k = 0; k <= block; k++) {
                                     for(auto& replay_inst : this -> inst_queue_block) {
                                         exec_once(replay_inst);
-                                        this->curBlock = k;
-                                        this->curDim0 = j;
-                                        this->curDim1 = i;
-                                    }      
+                                    }
+                                    this->curBlock = k;
+                                    this->curDim0 = j;
+                                    this->curDim1 = i;
                                 }
                             }
                         }
