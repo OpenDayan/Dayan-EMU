@@ -3,7 +3,7 @@
 
 # 项目配置
 PROJECT_NAME := rvt_emulator
-SUB_DIRS := emu main utils
+SUB_DIRS := emu rvt64 main utils
 BUILD_DIR := build
 OUTPUT_DIR := bin
 
