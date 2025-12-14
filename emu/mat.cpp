@@ -1,3 +1,4 @@
+#include "common.hpp"
 #include "mat.hpp"
 #include "fputils.hpp"
 #include "swizzle.hpp"
@@ -11,8 +12,8 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     void mat_t::issue(const rvt_pack_t* inst) {
-        bool is_mat_tcsr = (inst->inst & 0xf6000000) == 0x000000000;
-        bool is_mat = is_mat_tcsr | ((inst->inst & 0xf0000000) == 0x10000000);
+        bool is_mat_tcsr = (inst->inst & 0xf600007f) == (0x000000000 | RVTNG_OPCODE);
+        bool is_mat = is_mat_tcsr | ((inst->inst & 0xf000007f) == (0x10000000 | RVTNG_OPCODE));
         if(!is_mat) {
             // ignore
             return;

@@ -1,3 +1,4 @@
+#include "common.hpp"
 #include "lsu.hpp"
 #include "swizzle.hpp"
 #include <atomic>
@@ -94,8 +95,8 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     void lsu_t::issue(const rvt_pack_t* inst) {
-        bool is_dma_tcsr = (inst->inst & 0xf6000000) == 0x04000000;
-        bool is_dma = is_dma_tcsr | ((inst->inst & 0xe0000000) == 0x20000000);
+        bool is_dma_tcsr = (inst->inst & 0xf600007f) == (0x04000000 | RVTNG_OPCODE);
+        bool is_dma = is_dma_tcsr | ((inst->inst & 0xe000007f) == (0x20000000 | RVTNG_OPCODE));
         if(!is_dma) {
             // ignore
             return;

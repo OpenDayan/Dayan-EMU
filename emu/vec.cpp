@@ -1,3 +1,4 @@
+#include "common.hpp"
 #include "vec.hpp"
 #include "swizzle.hpp"
 #include <cassert>
@@ -93,8 +94,8 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     void vec_t::issue(const rvt_pack_t* inst) {
-        bool is_vec_tcsr = (inst->inst & 0xf6000000) == 0x02000000;
-        bool is_vec = is_vec_tcsr | ((inst->inst & 0xe0000000) == 0x80000000) | ((inst->inst & 0xe0000000) == 0x40000000);
+        bool is_vec_tcsr = (inst->inst & 0xf600007f) == (0x02000000 | RVTNG_OPCODE);
+        bool is_vec = is_vec_tcsr | ((inst->inst & 0xe000007f) == (0x80000000 | RVTNG_OPCODE)) | ((inst->inst & 0xe000007f) == (0x40000000 | RVTNG_OPCODE));
         if(!is_vec) {
             // ignore
             return;

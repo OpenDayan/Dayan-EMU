@@ -15,10 +15,12 @@ struct rvt64_tcsr_t {
 class rvt64_t: exec_unit_t {
 public:
     void issue(const rvt_pack_t* inst) override;
-    rvt64_t(exec_unit_t* parrent);
+    rvt64_t(exec_unit_t* parrent, uint8_t* uram);
     void execute(void);  // 独占循环
 
 protected:
+    // 私有指令队列
+    MPMCQueue<rvt_pack_t, 128> inst_queue;
 };
 
 }
