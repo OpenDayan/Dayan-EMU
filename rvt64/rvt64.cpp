@@ -1,6 +1,7 @@
 #include "rvt64.hpp"
 #include "rvt64_helper.hpp"
 #include "swizzle.hpp"
+#include "fputils.hpp"
 #include <atomic>
 #include <thread>
 
@@ -47,6 +48,8 @@ namespace RVTNG {
             uint8_t tcfgrs2 = (inst.inst >> 35) & 0x7;
             uint8_t tcfgrs3 = (inst.inst >> 38) & 0x7;
             uint8_t subop = (inst.inst >> 50) & 0x3f;
+            uint8_t rs1type = ((inst.inst >> 12) & 0x3) | ((inst.inst >> 38) & 0x3c);
+            uint8_t rs3type = (inst.inst >> 45) & 0x7f;
             switch (func) {
             case 0b10000000: // tx.tcsr.xchg.nmask
                 cmt_pack.timestamp = inst.timestamp;
@@ -157,6 +160,46 @@ namespace RVTNG {
                     break;
                 default:
                     printf("RVT64: Unsupport tx.fp subop==%d!\n", subop);
+                    break;
+                }
+                break;
+            case 0b10001110: // tx.convert
+                // 目前仅支持 FP -> S32 / BF16 / FP16 / FP8E4M3 的转换
+                switch (rs1type) {
+                case 0b1001100: // FP32
+                    switch (rs3type) {
+                    case 0b1000101: // S32
+                        // TODO: Support Round Mode
+                        rvt64_handle_unary_operation<float, int32_t>(
+                            [](auto x) -> int32_t { return static_cast<int32_t>(x); },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                        break;
+                    case 0b1001011: // BF16
+                        rvt64_handle_unary_operation<float, uint16_t>(
+                            FP32ToBF16,
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                        break;
+                    case 0b1001100: // FP16
+                        rvt64_handle_unary_operation<float, uint16_t>(
+                            FP32ToFP16,
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                        break;
+                    case 0b0011100: // FP8E4M3
+                        rvt64_handle_unary_operation<float, uint8_t>(
+                            FP32ToFP8<4>,
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                        break;
+                    default:
+                        printf("RVT64: Unsupport tx.convert rs1type==%d, rs3type==%d!\n", rs1type, rs3type);
+                        break;
+                    }
+                    break;
+                default:
+                    printf("RVT64: Unsupport tx.convert rs1type==%d!\n", rs1type);
                     break;
                 }
                 break;

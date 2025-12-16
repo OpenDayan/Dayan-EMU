@@ -243,3 +243,29 @@ inline float fp32_dot_product(float sum, const float* a, const float* b) {
     return sum;
 }
 
+
+static inline uint16_t FP32ToFP16(float f) {
+    uint32_t x = 0;
+    memcpy(&x, &f, sizeof(float));
+    uint16_t h = ((x >> 16) & 0x8000) |
+             ((((x & 0x7f800000) - 0x38000000) >> 13) & 0x7c00) |
+             ((x >> 13) & 0x03ff);
+  
+    if ((x & 0x7f800000) == 0x7f800000) {
+      h = (h & 0x8000) | 0x7c00 | ((x >> 13) & 0x03ff);
+    } else if ((x & 0x7f800000) > 0x477fe000) {
+      h = (h & 0x8000) | 0x7c00;
+    } else if ((x & 0x7f800000) < 0x38000000) {
+      uint32_t sign = x & 0x80000000;
+      uint32_t mantissa = (x & 0x007fffff) | 0x00800000;
+      int32_t exponent = ((x >> 23) & 0xff) - 127 - 14;
+  
+      if (exponent < -24) {
+        h = (uint16_t)(sign >> 16);
+      } else {
+        mantissa >>= (-exponent);
+        h = (uint16_t)((sign >> 16) | (mantissa >> 13));
+      }
+    }
+    return h;
+}

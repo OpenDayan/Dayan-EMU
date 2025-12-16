@@ -91,5 +91,26 @@ namespace RVTNG {
         }
     }
 
+    
+    template<typename TIN, typename TOUT, typename FUNC>
+    static inline void rvt64_handle_unary_operation(
+        FUNC func,
+        uint8_t* uram,
+        ulong x_base, const rvt64_tcsr_t& x_tcsr,
+        ulong y_base, const rvt64_tcsr_t& y_tcsr)
+    {
+        for(ulong dim3 = 0; dim3 < y_tcsr.dim3; dim3++) {
+            for(ulong dim2 = 0; dim2 < y_tcsr.dim2; dim2++) {
+                for(ulong dim1 = 0; dim1 < y_tcsr.dim1; dim1++) {
+                    for(ulong dim0 = 0; dim0 < y_tcsr.dim0; dim0++) {
+                        TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
+                        TOUT y = func(x);
+                        rvt64_write_uram<TOUT>(uram, y_base, dim0, dim1, dim2, dim3, y_tcsr, y);
+                    }
+                }
+            }
+        }
+    }
+
 } // namespace RVTNG
 
