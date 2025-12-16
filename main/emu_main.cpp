@@ -39,6 +39,7 @@ int main(int argc, char** argv) {
     // 绑定顶层提交函数
     top.register_commit_callback([fdMsg, &fdMsgMutex](const rvt_commit_t* pkg) {
         // printf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
+        if(pkg->rd == 0) return;
         std::lock_guard<std::mutex> lock(fdMsgMutex);
         backend_instruction_commit(fdMsg, 0, pkg);
     });
@@ -81,7 +82,7 @@ int main(int argc, char** argv) {
         if(count) {
             ulong v = top.issue(&inst);
             if(v != 1) {
-                printf("Warning: Inst %lx Issued %d times.\n", inst.inst, v);
+                printf("Warning: Inst %lx Issued %ld times.\n", inst.inst, v);
             }
         } else usleep(100); // 10kHz
     }
