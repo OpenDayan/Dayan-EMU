@@ -50,6 +50,7 @@ namespace RVTNG {
             uint8_t subop = (inst.inst >> 50) & 0x3f;
             uint8_t rs1type = ((inst.inst >> 12) & 0x3) | ((inst.inst >> 38) & 0x3c);
             uint8_t rs3type = (inst.inst >> 45) & 0x7f;
+            uint8_t reduce_dim = (inst.inst >> 25) & 0x3;
             switch (func) {
             case 0b10000000: // tx.tcsr.xchg.nmask
                 cmt_pack.timestamp = inst.timestamp;
@@ -200,6 +201,57 @@ namespace RVTNG {
                     break;
                 default:
                     printf("RVT64: Unsupport tx.convert rs1type==%d!\n", rs1type);
+                    break;
+                }
+                break;
+            
+            case 0b10001100: // tx.int.reduce
+                switch (subop) {
+                case 0: // tx.int.reduce.max
+                    rvt64_handle_reduce_operation<int32_t, int32_t>(
+                        [](auto a, auto b) -> int32_t { return std::max(a, b); }, 0xffffffff,
+                        uram, reduce_dim, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                case 1: // tx.int.reduce.min
+                    rvt64_handle_reduce_operation<int32_t, int32_t>(
+                        [](auto a, auto b) -> int32_t { return std::min(a, b); }, 0x7fffffff,
+                        uram, reduce_dim, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                case 2: // tx.int.reduce.sum
+                    rvt64_handle_reduce_operation<int32_t, int32_t>(
+                        [](auto a, auto b) -> int32_t { return a + b; }, 0,
+                        uram, reduce_dim, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                default:
+                    printf("RVT64: Unsupport tx.int.reduce subop==%d!\n", subop);
+                    break;
+                }
+                break;
+            case 0b10001101: // tx.fp.reduce
+                switch (subop) {
+                case 0: // tx.fp.reduce.max
+                    rvt64_handle_reduce_operation<float, float>(
+                        [](auto a, auto b) -> float { return std::max(a, b); }, std::numeric_limits<float>::lowest(),
+                        uram, reduce_dim, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                case 1: // tx.fp.reduce.min
+                    rvt64_handle_reduce_operation<float, float>(
+                        [](auto a, auto b) -> float { return std::min(a, b); }, std::numeric_limits<float>::max(),
+                        uram, reduce_dim, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                case 2: // tx.fp.reduce.sum
+                    rvt64_handle_reduce_operation<float, float>(
+                        [](auto a, auto b) -> float { return a + b; }, 0.f,
+                        uram, reduce_dim, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                default:
+                    printf("RVT64: Unsupport tx.fp.reduce subop==%d!\n", subop);
                     break;
                 }
                 break;

@@ -112,5 +112,74 @@ namespace RVTNG {
         }
     }
 
+    
+    template<typename TIN, typename TOUT, typename FUNC>
+    static inline void rvt64_handle_reduce_operation(
+        FUNC func, TIN init_value,
+        uint8_t* uram, uint8_t reduce_dim,
+        ulong x_base, const rvt64_tcsr_t& x_tcsr,
+        ulong y_base, const rvt64_tcsr_t& y_tcsr)
+    {
+        switch (reduce_dim) {
+        case 0:
+            for(ulong dim3 = 0; dim3 < x_tcsr.dim3; dim3++) {
+                for(ulong dim2 = 0; dim2 < x_tcsr.dim2; dim2++) {
+                    for(ulong dim1 = 0; dim1 < x_tcsr.dim1; dim1++) {
+                        TIN acc = init_value;
+                        for(ulong dim0 = 0; dim0 < x_tcsr.dim0; dim0++) {
+                            TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
+                            acc = func(acc, x);
+                        }
+                        rvt64_write_uram<TOUT>(uram, y_base, 0, 0, 0, 0, y_tcsr, acc);
+                    }
+                }
+            }
+            break;
+        case 1:
+            for(ulong dim3 = 0; dim3 < x_tcsr.dim3; dim3++) {
+                for(ulong dim2 = 0; dim2 < x_tcsr.dim2; dim2++) {
+                    for(ulong dim0 = 0; dim0 < x_tcsr.dim0; dim0++) {
+                        TIN acc = init_value;
+                        for(ulong dim1 = 0; dim1 < x_tcsr.dim1; dim1++) {
+                            TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
+                            acc = func(acc, x);
+                        }
+                        rvt64_write_uram<TOUT>(uram, y_base, 0, 0, 0, 0, y_tcsr, acc);
+                    }
+                }
+            }
+            break;
+        case 2:
+            for(ulong dim3 = 0; dim3 < x_tcsr.dim3; dim3++) {
+                for(ulong dim1 = 0; dim1 < x_tcsr.dim1; dim1++) {
+                    for(ulong dim0 = 0; dim0 < x_tcsr.dim0; dim0++) {
+                        TIN acc = init_value;
+                        for(ulong dim2 = 0; dim2 < x_tcsr.dim2; dim2++) {
+                            TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
+                            acc = func(acc, x);
+                        }
+                    }
+                }
+            }
+            break;
+        case 3:
+            for(ulong dim2 = 0; dim2 < x_tcsr.dim2; dim2++) {
+                for(ulong dim1 = 0; dim1 < x_tcsr.dim1; dim1++) {
+                    for(ulong dim0 = 0; dim0 < x_tcsr.dim0; dim0++) {
+                        TIN acc = init_value;
+                        for(ulong dim3 = 0; dim3 < x_tcsr.dim3; dim3++) {
+                            TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
+                            acc = func(acc, x);
+                        }
+                    }
+                }
+            }
+            break;
+        default:
+            printf("* Error: Reduce dimension %d is not supported.\n", reduce_dim);
+            return;
+        }
+    }
+
 } // namespace RVTNG
 
