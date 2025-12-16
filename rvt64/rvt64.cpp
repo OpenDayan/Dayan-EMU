@@ -135,6 +135,31 @@ namespace RVTNG {
                     }
                 }
                 break;
+            case 0b00001001: // tx.fp
+                switch (subop) {
+                case 0: // tx.fp.add
+                    rvt64_handle_binary_operation<float, float>(
+                        [](auto a, auto b) -> float { return a + b; },
+                        uram, broadcast, inst.rs1, tcsr[tcfgrs1], inst.rs2, tcsr[tcfgrs2], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                case 1: // tx.fp.sub
+                    rvt64_handle_binary_operation<float, float>(
+                        [](auto a, auto b) -> float { return a - b; },
+                        uram, broadcast, inst.rs1, tcsr[tcfgrs1], inst.rs2, tcsr[tcfgrs2], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                case 2: // tx.fp.mul
+                    rvt64_handle_binary_operation<float, float>(
+                        [](auto a, auto b) -> float { return a * b; },
+                        uram, broadcast, inst.rs1, tcsr[tcfgrs1], inst.rs2, tcsr[tcfgrs2], inst.rd, tcsr[tcfgrs3]
+                    );
+                    break;
+                default:
+                    printf("RVT64: Unsupport tx.fp subop==%d!\n", subop);
+                    break;
+                }
+                break;
             default:
                 printf("RVT64: Unsupport Instruction %lx!\n",inst.inst);
                 break;
