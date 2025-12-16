@@ -10,7 +10,7 @@ namespace RVTNG {
 
 using commit_call_back_f = std::function<void(const rvt_commit_t*)>;
 using scoreboard_call_back_f = std::function<void(const uint64_t)>;
-using issue_call_back_f = std::function<void(const rvt_pack_t*)>;
+using issue_call_back_f = std::function<ulong(const rvt_pack_t*)>;
 
 class exec_unit_t {
 private:
@@ -30,11 +30,13 @@ public:
     }
     // 初始化资源
     exec_unit_t() {};
-    // 阻塞式的发射一条指令
-    virtual void issue(const rvt_pack_t* inst) {
+    // 阻塞式的发射一条指令，返回值，发射了这条指令的单元数量
+    virtual ulong issue(const rvt_pack_t* inst) {
+        ulong ret = 0;
         for (const auto& cb : issue_cb) {
-            cb(inst);
+            ret += cb(inst);
         }
+        return ret;
     }
     // 阻塞式指令提交回调注册
     template<typename T>
@@ -54,7 +56,7 @@ public:
     }
     // 指令发射回调注册
     template<typename T>
-    void register_issue_callback(T* obj, void (T::*method)(const rvt_pack_t*)) {
+    void register_issue_callback(T* obj, ulong (T::*method)(const rvt_pack_t*)) {
         issue_cb.emplace_back(std::bind(method, obj, std::placeholders::_1));
     }
     void register_issue_callback(issue_call_back_f method) {

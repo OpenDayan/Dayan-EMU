@@ -11,15 +11,16 @@ namespace RVTNG {
         this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
-    void mat_t::issue(const rvt_pack_t* inst) {
+    ulong mat_t::issue(const rvt_pack_t* inst) {
         bool is_mat_tcsr = (inst->inst & 0xf600007f) == (0x000000000 | RVTNG_OPCODE);
         bool is_mat = is_mat_tcsr | ((inst->inst & 0xf000007f) == (0x10000000 | RVTNG_OPCODE));
         if(!is_mat) {
             // ignore
-            return;
+            return 0;
         }
         this->inst_queue.enqueue(*inst);
         printf("MAT: Enqueue MAT Instruction %x!\n",(uint32_t)inst->inst);
+        return 1;
     }
     void mat_t::execute(void) {
         while(1) {

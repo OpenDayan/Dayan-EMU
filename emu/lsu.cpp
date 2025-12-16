@@ -94,15 +94,16 @@ namespace RVTNG {
         lsu_buffer = new uint8_t[512 * 64];
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
-    void lsu_t::issue(const rvt_pack_t* inst) {
+    ulong lsu_t::issue(const rvt_pack_t* inst) {
         bool is_dma_tcsr = (inst->inst & 0xf600007f) == (0x04000000 | RVTNG_OPCODE);
         bool is_dma = is_dma_tcsr | ((inst->inst & 0xe000007f) == (0x20000000 | RVTNG_OPCODE));
         if(!is_dma) {
             // ignore
-            return;
+            return 0;
         }
         this->inst_queue.enqueue(*inst);
         printf("LSU: Enqueue LSU Instruction %x!\n",(uint32_t)inst->inst);
+        return 1;
     }
     void lsu_t::execute(void) {
         while(1) {

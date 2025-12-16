@@ -62,7 +62,7 @@ struct ResQ {
 
 class vec_t: exec_unit_t {
 public:
-    void issue(const rvt_pack_t* inst) override;
+    ulong issue(const rvt_pack_t* inst) override;
     vec_t(exec_unit_t* parrent, uint8_t *uram, ulong lane_width);
     void execute(void);  // 独占循环
 

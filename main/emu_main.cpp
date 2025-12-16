@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     // 创建 Scoreboard
     top.register_issue_callback([&top, &sb](const rvt_pack_t* inst) {
         bool is_sb = (inst->inst & 0xfe000000) == 0x0e000000;
-        if(!is_sb) return;
+        if(!is_sb) return 0ul;
         rvt_commit_t cmt_pack;
         cmt_pack.timestamp = inst->timestamp;
         cmt_pack.rd = (inst->inst >> 7) & 0x1f;
@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
         if(p != std::nullopt) printf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
         cmt_pack.data = p.value_or(0ul);
         top.commit(&cmt_pack);
+        return 1ul;
     });
     // 创建子执行线程
     std::thread lsu_exec(&RVTNG::lsu_t::execute, &lsu);
@@ -77,7 +78,11 @@ int main(int argc, char** argv) {
         // 取指令
         rvt_pack_t inst;
         int count = backend_instruction_fetch(fdInst, 0, &inst);
-        if(count) top.issue(&inst);
-        else usleep(100); // 10kHz
+        if(count) {
+            ulong v = top.issue(&inst);
+            if(v != 1) {
+                printf("Warning: Inst %lx Issued %d times.\n", inst.inst, v);
+            }
+        } else usleep(100); // 10kHz
     }
 }

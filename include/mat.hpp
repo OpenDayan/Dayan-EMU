@@ -25,7 +25,7 @@ struct mat_tcsr_t {
 
 class mat_t: exec_unit_t {
 public:
-    void issue(const rvt_pack_t* inst) override;
+    ulong issue(const rvt_pack_t* inst) override;
     mat_t(exec_unit_t* parrent, uint8_t *uram);
     void execute(void);  // 独占循环
 

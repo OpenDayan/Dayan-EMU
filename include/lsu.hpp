@@ -32,7 +32,7 @@ struct lsu_tcsr_t {
 
 class lsu_t: exec_unit_t {
 public:
-    void issue(const rvt_pack_t* inst) override;
+    ulong issue(const rvt_pack_t* inst) override;
     lsu_t(exec_unit_t* parrent, uint8_t *uram, int fdMsg, std::mutex *fdMsgMutex);
     void execute(void);  // 独占循环
 
