@@ -4,6 +4,7 @@
 #include "fputils.hpp"
 #include <atomic>
 #include <thread>
+#include <cmath>
 
 namespace RVTNG {
     ulong rvt64_t::issue(const rvt_pack_t* inst) {
@@ -164,6 +165,49 @@ namespace RVTNG {
                     break;
                 }
                 break;
+            case 0b10010000: // tx.sfu
+                switch (subop) {
+                case 0: // tx.sfu.recip
+                    rvt64_handle_unary_operation<float, float>(
+                            [](auto x) -> float { return 1.0f / x; },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                    break;
+                case 1: // tx.sfu.rsqrt
+                    rvt64_handle_unary_operation<float, float>(
+                            [](auto x) -> float { return 1.0f / sqrtf(x); },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                    break;
+                case 2: // tx.sfu.sin
+                    rvt64_handle_unary_operation<float, float>(
+                            [](auto x) -> float { return sinf(x); },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                    break;
+                case 3: // tx.sfu.cos
+                    rvt64_handle_unary_operation<float, float>(
+                            [](auto x) -> float { return cosf(x); },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                    break;
+                case 4: // tx.sfu.exp
+                    rvt64_handle_unary_operation<float, float>(
+                            [](auto x) -> float { return expf(x); },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                    break;
+                case 5: // tx.sfu.relu
+                    rvt64_handle_unary_operation<float, float>(
+                            [](auto x) -> float { return x < 0.f ? 0.f : x; },
+                            uram, inst.rs1, tcsr[tcfgrs1], inst.rd, tcsr[tcfgrs3]
+                        );
+                    break;
+                default:
+                    printf("RVT64: Unsupport tx.sfu subop==%d!\n", subop);
+                    break;
+                }
+                break;
             case 0b10001110: // tx.convert
                 // 目前仅支持 FP -> S32 / BF16 / FP16 / FP8E4M3 的转换
                 switch (rs1type) {
@@ -204,7 +248,6 @@ namespace RVTNG {
                     break;
                 }
                 break;
-            
             case 0b10001100: // tx.int.reduce
                 switch (subop) {
                 case 0: // tx.int.reduce.max
