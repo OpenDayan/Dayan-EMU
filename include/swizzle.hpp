@@ -23,6 +23,9 @@ namespace RVTNG {
         uint64_t shiftedMask = mask << M;
         addr = addr ^ (shiftedAddr & shiftedMask);
         // 可选地址范围检查
+        if(addr >= 0x10000000) {
+            addr -= 0x10000000;
+        }
         if(addr >= 1024ul * 1024ul) {
             printf("Fault! URAM Overwrite!\n");
             addr = 0;           
