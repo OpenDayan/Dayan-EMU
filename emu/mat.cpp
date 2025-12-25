@@ -66,6 +66,7 @@ namespace RVTNG {
                 cmt_pack.data = inst.rd;
                 printf("MAT: scoreboard bar %lx:\n", cmt_pack.rd);
                 commit(&cmt_pack);
+                continue;
             }
             // MAT 指令执行
             {

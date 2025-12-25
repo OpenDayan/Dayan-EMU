@@ -149,6 +149,7 @@ namespace RVTNG {
                 cmt_pack.data = inst.rd;
                 printf("LSU: scoreboard bar %lx:\n", cmt_pack.rd);
                 commit(&cmt_pack);
+                continue;
             }
             // DMA 指令执行
             {

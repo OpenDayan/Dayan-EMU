@@ -46,12 +46,12 @@ namespace RVTNG {
         ulong a_base, const rvt64_tcsr_t& a_tcsr,
         ulong b_base, const rvt64_tcsr_t& b_tcsr,
         ulong c_base, const rvt64_tcsr_t& c_tcsr) {
+        bool broadcast_0 = broadcast & 0b00000001;
+        bool broadcast_1 = broadcast & 0b00000010;
+        bool broadcast_2 = broadcast & 0b00000100;
+        bool broadcast_3 = broadcast & 0b00001000;
         // Check broadcast
         {
-            bool broadcast_0 = broadcast & 0b00000001;
-            bool broadcast_1 = broadcast & 0b00000010;
-            bool broadcast_2 = broadcast & 0b00000100;
-            bool broadcast_3 = broadcast & 0b00001000;
             if(broadcast_0) {
                 if(a_tcsr.dim0 != 1 && b_tcsr.dim0 != 1) {
                     printf("* Error: Broadcast 0 is not supported for non-1D arrays.\n");
@@ -82,7 +82,11 @@ namespace RVTNG {
                 for(ulong dim1 = 0; dim1 < c_tcsr.dim1; dim1++) {
                     for(ulong dim0 = 0; dim0 < c_tcsr.dim0; dim0++) {
                         TIN a = rvt64_read_uram<TIN>(uram, a_base, dim0, dim1, dim2, dim3, a_tcsr);
-                        TIN b = rvt64_read_uram<TIN>(uram, b_base, dim0, dim1, dim2, dim3, b_tcsr);
+                        TIN b = rvt64_read_uram<TIN>(uram, b_base, 
+                            broadcast_0 ? 0 : dim0,
+                            broadcast_1 ? 0 : dim1,
+                            broadcast_2 ? 0 : dim2,
+                            broadcast_3 ? 0 : dim3, b_tcsr);
                         TOUT c = func(a, b);
                         rvt64_write_uram<TOUT>(uram, c_base, dim0, dim1, dim2, dim3, c_tcsr, c);    
                     }
