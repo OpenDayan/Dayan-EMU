@@ -134,7 +134,7 @@ namespace RVTNG {
                             TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
                             acc = func(acc, x);
                         }
-                        rvt64_write_uram<TOUT>(uram, y_base, 0, 0, 0, 0, y_tcsr, acc);
+                        rvt64_write_uram<TOUT>(uram, y_base, 0, dim1, dim2, dim3, y_tcsr, acc);
                     }
                 }
             }
@@ -148,7 +148,7 @@ namespace RVTNG {
                             TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
                             acc = func(acc, x);
                         }
-                        rvt64_write_uram<TOUT>(uram, y_base, 0, 0, 0, 0, y_tcsr, acc);
+                        rvt64_write_uram<TOUT>(uram, y_base, dim0, 0, dim2, dim3, y_tcsr, acc);
                     }
                 }
             }
@@ -162,6 +162,7 @@ namespace RVTNG {
                             TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
                             acc = func(acc, x);
                         }
+                        rvt64_write_uram<TOUT>(uram, y_base, dim0, dim1, 0, dim3, y_tcsr, acc);
                     }
                 }
             }
@@ -175,6 +176,7 @@ namespace RVTNG {
                             TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, x_tcsr);
                             acc = func(acc, x);
                         }
+                        rvt64_write_uram<TOUT>(uram, y_base, dim0, dim1, dim2, 0, y_tcsr, acc);
                     }
                 }
             }
