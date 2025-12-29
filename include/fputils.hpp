@@ -41,9 +41,34 @@ union fp32_int32 {
 };
 
 static inline uint16_t FP32ToBF16(float a) {
-    fp32_int32 u;
-    u.f = a;
-    return (u.bits >> 16) & 0xffff;
+    // FIXME: Use bf16 by default
+    uint32_t x = 0;
+    x = *(uint32_t *)&a;
+    uint32_t sign = x & 0x80000000;
+    int32_t exponent = (x >> 23) & 0xFF;
+    // uint32_t mantissa = x & 0x007FFFFF;
+
+    if (exponent == 0xFF) {
+        return (x >> 16) | 0x007F;
+    }
+
+    if (exponent == 0) {
+        return (x >> 16) & 0x8000;
+    }
+
+    uint32_t truncated = x >> 16;
+    uint32_t round_bit = (x >> 15) & 1;
+    uint32_t sticky_bits = x & 0x7FFF;
+
+    if (round_bit && (sticky_bits || (truncated & 1))) {
+        truncated += 1;
+    }
+
+    if ((truncated & 0x7F80) == 0x7F80) {
+        truncated = (truncated & 0x8000) | 0x7F80;
+    }
+
+    return truncated;
 }
 
 static inline float BF16ToFP32(uint16_t a) {
@@ -250,7 +275,7 @@ static inline uint16_t FP32ToFP16(float f) {
     uint16_t h = ((x >> 16) & 0x8000) |
              ((((x & 0x7f800000) - 0x38000000) >> 13) & 0x7c00) |
              ((x >> 13) & 0x03ff);
-  
+
     if ((x & 0x7f800000) == 0x7f800000) {
       h = (h & 0x8000) | 0x7c00 | ((x >> 13) & 0x03ff);
     } else if ((x & 0x7f800000) > 0x477fe000) {
@@ -259,7 +284,7 @@ static inline uint16_t FP32ToFP16(float f) {
       uint32_t sign = x & 0x80000000;
       uint32_t mantissa = (x & 0x007fffff) | 0x00800000;
       int32_t exponent = ((x >> 23) & 0xff) - 127 - 14;
-  
+
       if (exponent < -24) {
         h = (uint16_t)(sign >> 16);
       } else {

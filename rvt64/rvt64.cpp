@@ -49,8 +49,8 @@ namespace RVTNG {
             uint8_t tcfgrs2 = (inst.inst >> 35) & 0x7;
             uint8_t tcfgrs3 = (inst.inst >> 38) & 0x7;
             uint8_t subop = (inst.inst >> 50) & 0x3f;
-            uint8_t rs1type = ((inst.inst >> 12) & 0x3) | ((inst.inst >> 38) & 0x3c);
-            uint8_t rs3type = (inst.inst >> 45) & 0x7f;
+            uint16_t rs1type = ((inst.inst >> 12) & 0x7) | (((inst.inst >> 41) & 0xf) << 3);
+            uint16_t rs3type = (inst.inst >> 45) & 0x7f;
             uint8_t reduce_dim = (inst.inst >> 25) & 0x3;
             switch (func) {
             case 0b10000000: // tx.tcsr.xchg.nmask
