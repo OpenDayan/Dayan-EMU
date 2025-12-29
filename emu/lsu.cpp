@@ -27,6 +27,11 @@ namespace RVTNG {
                                   + dim1  * tcsr->inDim1Stride
                                   + dim2  * tcsr->inDim2Stride;
                                 std::lock_guard<std::mutex> lock(*fdMsgMutex);
+                                if(addr & 63) {
+                                    // 非 64B 对齐的情况
+                                    printf("Fault! SRC DRAM Not Aligned with 64B!\n");
+                                    return;
+                                }
                                 backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64, addr);
                             }
                             for(uint64_t transfer = tcsr->requestPadding + 1; transfer < 64; transfer++) {
@@ -68,6 +73,11 @@ namespace RVTNG {
                                     + dim2  * tcsr->outDim2Stride;
                                 std::lock_guard<std::mutex> lock(*fdMsgMutex);
                                 backend_dram_write(fdMsg, (char*)transfer_buf, 64, addr);
+                                if(addr & 63) {
+                                    // 非 64B 对齐的情况
+                                    printf("Fault! DST DRAM Not Aligned with 64B!\n");
+                                    return;
+                                }
                             } else {
                                 for(int transfer = 0; transfer < 64; transfer += 8) {
                                     uint64_t addr = swizzle_addr(
