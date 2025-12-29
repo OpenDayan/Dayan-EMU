@@ -129,8 +129,8 @@ namespace RVTNG {
                                 auto v01 = (~a) & b; // 01
                                 auto v10 = a & (~b); // 10
                                 auto v11 = a & b;    // 11
-                                return (v00 * (lut & 0x1)) | (v01 * (lut & 0x2)) |
-                                       (v10 * (lut & 0x4)) | (v11 * (lut & 0x8));
+                                return (v00 * ((lut & 0x1) != 0)) | (v01 * ((lut & 0x2) != 0)) |
+                                       (v10 * ((lut & 0x4) != 0)) | (v11 * ((lut & 0x8) != 0));
                             },
                             uram, broadcast, inst.rs1, tcsr[tcfgrs1], inst.rs2, tcsr[tcfgrs2], inst.rd, tcsr[tcfgrs3]
                         );

@@ -46,10 +46,10 @@ namespace RVTNG {
         ulong a_base, const rvt64_tcsr_t& a_tcsr,
         ulong b_base, const rvt64_tcsr_t& b_tcsr,
         ulong c_base, const rvt64_tcsr_t& c_tcsr) {
-        bool broadcast_0 = broadcast & 0b00000001;
-        bool broadcast_1 = broadcast & 0b00000010;
-        bool broadcast_2 = broadcast & 0b00000100;
-        bool broadcast_3 = broadcast & 0b00001000;
+        bool broadcast_0 = (broadcast & 0b00000001) !=0 ;
+        bool broadcast_1 = (broadcast & 0b00000010) !=0 ;
+        bool broadcast_2 = (broadcast & 0b00000100) !=0 ;
+        bool broadcast_3 = (broadcast & 0b00001000) !=0 ;
         // Check broadcast
         {
             if(broadcast_0) {

@@ -14,8 +14,8 @@ CXX := $(CROSS_COMPILE)g++
 AR := $(CROSS_COMPILE)ar
 
 # 编译选项
-CFLAGS ?= -std=c11 -Wall -Wextra -O0 -g -fsanitize=address
-CXXFLAGS ?= -std=c++20 -Wall -Wextra -O0 -g -fsanitize=address
+CFLAGS ?= -std=c11 -Wall -Wextra -O3 -g -fsanitize=address
+CXXFLAGS ?= -std=c++20 -Wall -Wextra -O3 -g -fsanitize=address
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
 LDFLAGS ?= -lm -lpthread -fsanitize=address
 
