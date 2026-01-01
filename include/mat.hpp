@@ -31,7 +31,7 @@ public:
 
 protected:
     // 执行一条 BF16 MAT 指令
-    void execute_mma_bf16_once(mat_tcsr_t* tcsr, uint64_t a, uint64_t b, uint64_t c);
+    void execute_mm_bf16_once(mat_tcsr_t* tcsr, uint64_t a, uint64_t b, uint64_t c, bool acc);
     // 私有指令队列
     MPMCQueue<rvt_pack_t, 32> inst_queue;
     // 私有 TCSR

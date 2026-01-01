@@ -75,7 +75,7 @@ namespace RVTNG {
                 uint64_t b = inst.rs2;
                 uint64_t c = inst.rd;
                 if(tcsr[group].dataType == 0) {
-                    execute_mma_bf16_once(tcsr + group, a, b, c);
+                    execute_mm_bf16_once(tcsr + group, a, b, c, !((inst.inst >> 12) & 0x1));
                 } else {
                     printf("MAT: FIXME, add support for type %ld!\n", tcsr[group].dataType);
                 }
@@ -104,7 +104,7 @@ namespace RVTNG {
         }
     }
 
-    void mat_t::execute_mma_bf16_once(mat_tcsr_t* tcsr, uint64_t a, uint64_t b, uint64_t c) {
+    void mat_t::execute_mm_bf16_once(mat_tcsr_t* tcsr, uint64_t a, uint64_t b, uint64_t c, bool acc) {
         ulong M = tcsr->m + 1;
         ulong N = tcsr->n + 1;
         ulong K = tcsr->k + 1;
@@ -127,7 +127,7 @@ namespace RVTNG {
                 for(ulong n = 0; n < N; n += 1) {
                     // Fill B
                     fetch_row_bf16(tcsr->bSwizzleMBS, uram, b + n * tcsr->bStride + k * 2, B, leftK);
-                    float sum = *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS));
+                    float sum = (acc || k != 0) ? *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) : 0.f;
                     for(ulong subK = 0; subK < 128; subK += 16) {
                         if(subK >= leftK) break;
                         sum = fp32_dot_product<16>(sum, A + subK, B + subK);

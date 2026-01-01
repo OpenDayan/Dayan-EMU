@@ -44,7 +44,7 @@ static inline uint16_t FP32ToBF16(float a) {
     // FIXME: Use bf16 by default
     uint32_t x = 0;
     x = *(uint32_t *)&a;
-    uint32_t sign = x & 0x80000000;
+    // uint32_t sign = x & 0x80000000;
     int32_t exponent = (x >> 23) & 0xFF;
     // uint32_t mantissa = x & 0x007FFFFF;
 
