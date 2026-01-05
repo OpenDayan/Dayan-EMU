@@ -1,3 +1,4 @@
+#include "debugf.hpp"
 #include "common.hpp"
 #include "mat.hpp"
 #include "fputils.hpp"
@@ -19,7 +20,7 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        printf("MAT: Enqueue MAT Instruction %x!\n",(uint32_t)inst->inst);
+        debugf("MAT: Enqueue MAT Instruction %x!\n",(uint32_t)inst->inst);
         return 1;
     }
     void mat_t::execute(void) {
@@ -33,9 +34,9 @@ namespace RVTNG {
             bool is_mat_sb_bar     = (inst.inst & 0xfe004000) == 0x08004000;
             if(is_mat_tcsr_write | is_mat_tcsr_read) {
                 uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
-                printf("MAT: tcsr read write %d:\n", tcsr_id);
+                debugf("MAT: tcsr read write %d:\n", tcsr_id);
                 if(tcsr_id > 8 * 32) {
-                    printf("* Illgal id.\n");
+                    debugf("* Illgal id.\n");
                     continue;
                 }
                 uint64_t* _tcsr = (uint64_t*) &this->tcsr;
@@ -43,19 +44,19 @@ namespace RVTNG {
                     if((tcsr_id % 32) != 31)
                         _tcsr[tcsr_id] = inst.rd & ((1 << this->tcsr_width[tcsr_id & 0x1f]) - 1);
                     this->tcsr[tcsr_id / 32].checksum += 1;
-                    printf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
+                    debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
                 } else {
                     rvt_commit_t cmt_pack;
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                     cmt_pack.data = _tcsr[tcsr_id];
                     commit(&cmt_pack);
-                    printf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
+                    debugf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
                 }
                 continue;
             }
             if(is_mat_sb_produce) {
-                printf("MAT: scoreboard produce %lx:\n", inst.rd);
+                debugf("MAT: scoreboard produce %lx:\n", inst.rd);
                 scoreboard(inst.rd);
                 continue;
             }
@@ -64,7 +65,7 @@ namespace RVTNG {
                 cmt_pack.timestamp = inst.timestamp;
                 cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                 cmt_pack.data = inst.rd;
-                printf("MAT: scoreboard bar %lx:\n", cmt_pack.rd);
+                debugf("MAT: scoreboard bar %lx:\n", cmt_pack.rd);
                 commit(&cmt_pack);
                 continue;
             }
@@ -77,7 +78,7 @@ namespace RVTNG {
                 if(tcsr[group].dataType == 0) {
                     execute_mm_bf16_once(tcsr + group, a, b, c, !((inst.inst >> 12) & 0x1));
                 } else {
-                    printf("MAT: FIXME, add support for type %ld!\n", tcsr[group].dataType);
+                    debugf("MAT: FIXME, add support for type %ld!\n", tcsr[group].dataType);
                 }
                 continue;
             }
@@ -110,9 +111,9 @@ namespace RVTNG {
         ulong K = tcsr->k + 1;
         // 注意： K 对齐到 16, N 对齐到 8。
         if(((K % 16) != 0) || ((N % 8) != 0)) {
-            printf("MAT: ERROR K, N, K should be aligned to 16; N should be aligned to 8");
+            debugf("MAT: ERROR K, N, K should be aligned to 16; N should be aligned to 8");
         } else {
-            printf("MAT: Calculating M%ld N%ld K%ld\n", M, N, K);
+            debugf("MAT: Calculating M%ld N%ld K%ld\n", M, N, K);
         }
         // A buffer == float[128]
         // B buffer == float[128]
@@ -128,14 +129,20 @@ namespace RVTNG {
                     // Fill B
                     fetch_row_bf16(tcsr->bSwizzleMBS, uram, b + n * tcsr->bStride + k * 2, B, leftK);
                     float sum = (acc || k != 0) ? *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) : 0.f;
+                    if(std::isnan(sum)) {
+                        debugf("[ERROR] MAT: Encounter NAN!\n");
+                    }
                     for(ulong subK = 0; subK < 128; subK += 16) {
                         if(subK >= leftK) break;
                         sum = fp32_dot_product<16>(sum, A + subK, B + subK);
+                    }
+                    if(std::isnan(sum) || std::fabs(sum) >= 1e20) {
+                        debugf("[ERROR] MAT: Encounter NAN!\n");
                     }
                     *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) = sum;
                 }
             }
         }
-        printf("MAT: 0x%05lx = 0x%05lx @ 0x%05lx\n", c, a, b);
+        debugf("MAT: 0x%05lx = 0x%05lx @ 0x%05lx\n", c, a, b);
     }
 }

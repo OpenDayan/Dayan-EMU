@@ -1,3 +1,4 @@
+#include "debugf.hpp"
 #include "common.hpp"
 #include "lsu.hpp"
 #include "swizzle.hpp"
@@ -29,7 +30,7 @@ namespace RVTNG {
                                 std::lock_guard<std::mutex> lock(*fdMsgMutex);
                                 if(addr & 63) {
                                     // 非 64B 对齐的情况
-                                    printf("Fault! SRC DRAM Not Aligned with 64B!\n");
+                                    debugf("Fault! SRC DRAM Not Aligned with 64B!\n");
                                     return;
                                 }
                                 backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64, addr);
@@ -75,7 +76,7 @@ namespace RVTNG {
                                 backend_dram_write(fdMsg, (char*)transfer_buf, 64, addr);
                                 if(addr & 63) {
                                     // 非 64B 对齐的情况
-                                    printf("Fault! DST DRAM Not Aligned with 64B!\n");
+                                    debugf("Fault! DST DRAM Not Aligned with 64B!\n");
                                     return;
                                 }
                             } else {
@@ -93,7 +94,7 @@ namespace RVTNG {
                 }
             }
         }
-        printf("LSU: 0x%08lx <- 0x%08lx\n", dst, src);
+        debugf("LSU: 0x%08lx <- 0x%08lx\n", dst, src);
     }
 
     lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, int fdMsg, std::mutex* fdMsgMutex):fdMsgMutex(fdMsgMutex), fdMsg(fdMsg), uram(uram) {
@@ -112,7 +113,7 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        printf("LSU: Enqueue LSU Instruction %x!\n",(uint32_t)inst->inst);
+        debugf("LSU: Enqueue LSU Instruction %x!\n",(uint32_t)inst->inst);
         return 1;
     }
     void lsu_t::execute(void) {
@@ -126,9 +127,9 @@ namespace RVTNG {
             bool is_dma_sb_bar     = (inst.inst & 0xfe004000) == 0x0c004000;
             if(is_dma_tcsr_write | is_dma_tcsr_read) {
                 uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
-                printf("LSU: tcsr read write %d:\n", tcsr_id);
+                debugf("LSU: tcsr read write %d:\n", tcsr_id);
                 if(tcsr_id > 8 * 32) {
-                    printf("* Illgal id.\n");
+                    debugf("* Illgal id.\n");
                     continue;
                 }
                 uint64_t* _tcsr = (uint64_t*) &this->tcsr;
@@ -136,19 +137,19 @@ namespace RVTNG {
                     if((tcsr_id % 32) != 31)
                         _tcsr[tcsr_id] = inst.rd & ((1 << this->tcsr_width[tcsr_id & 0x1f]) - 1);
                     this->tcsr[tcsr_id / 32].checksum += 1;
-                    printf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
+                    debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
                 } else {
                     rvt_commit_t cmt_pack;
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                     cmt_pack.data = _tcsr[tcsr_id];
                     commit(&cmt_pack);
-                    printf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
+                    debugf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
                 }
                 continue;
             }
             if(is_dma_sb_produce) {
-                printf("LSU: scoreboard produce %lx:\n", inst.rd);
+                debugf("LSU: scoreboard produce %lx:\n", inst.rd);
                 scoreboard(inst.rd);
                 continue;
             }
@@ -157,7 +158,7 @@ namespace RVTNG {
                 cmt_pack.timestamp = inst.timestamp;
                 cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                 cmt_pack.data = inst.rd;
-                printf("LSU: scoreboard bar %lx:\n", cmt_pack.rd);
+                debugf("LSU: scoreboard bar %lx:\n", cmt_pack.rd);
                 commit(&cmt_pack);
                 continue;
             }

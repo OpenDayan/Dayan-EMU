@@ -16,6 +16,8 @@
 #ifndef RVTNG_INTF_H
 #define RVTNG_INTF_H
 
+#include "debugf.hpp"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -56,14 +58,14 @@ static inline void backend_init(int* fdMsg, int* fdInst) {
         if(retry >= 20) {
             exit(-1);
         }
-        printf("Backend Init msg client Fail, retrying %d...\n", ++retry);
+        debugf("Backend Init msg client Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
     while((*fdInst = rvt_socket_server_init("/tmp/rv_frontend_inst")) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
-        printf("Backend Init inst server Fail, retrying %d...\n", ++retry);
+        debugf("Backend Init inst server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
 }
@@ -74,14 +76,14 @@ static inline void frontend_init(int* fdMsg, int* fdInst) {
         if(retry >= 20) {
             exit(-1);
         }
-        printf("Frontend Init msg server Fail, retrying %d...\n", ++retry);
+        debugf("Frontend Init msg server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
     while((*fdInst = rvt_socket_client_init("/tmp/rv_frontend_inst")) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
-        printf("Frontend Init inst clint Fail, retrying %d...\n", ++retry);
+        debugf("Frontend Init inst clint Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
 }
@@ -92,7 +94,7 @@ static inline void* frontend_serve_inst_loop(void* arg) {
     while(1) {
         // Waiting status;
         if (rvt_socket_pop(fdInst, &msg) != 0) {
-            printf("Fail to get inst req from server.\n");
+            debugf("Fail to get inst req from server.\n");
             exit(1);
         }
         rvt_pack_t instPkg;
@@ -135,7 +137,7 @@ static inline void* backend_get_shm_ptr(const char* shm_name, size_t sz) {
     
     close(shm_fd); // 文件描述符可以关闭，映射仍然有效
     
-    printf("Backend: Created shared memory '%s' with size %zu at %p\n", 
+    debugf("Backend: Created shared memory '%s' with size %zu at %p\n", 
            shm_name, sz, ptr);
     return ptr;
 }
@@ -168,7 +170,7 @@ static inline void* frontend_get_shm_ptr(const char* shm_name) {
     
     close(shm_fd); // 文件描述符可以关闭，映射仍然有效
     
-    printf("Frontend: Opened shared memory '%s' with size %zu at %p\n", 
+    debugf("Frontend: Opened shared memory '%s' with size %zu at %p\n", 
            shm_name, sz, ptr);
     return ptr;
 }
@@ -179,7 +181,7 @@ static inline void cleanup_shm_ptr(const char* shm_name, void* ptr, size_t sz) {
         munmap(ptr, sz);
     }    
     shm_unlink(shm_name);
-    printf("Cleaned up shared memory '%s'\n", shm_name);
+    debugf("Cleaned up shared memory '%s'\n", shm_name);
 }
 static inline void* frontend_serve_msg_loop(void* arg) {
     int fdMsg = (long)arg;
@@ -187,7 +189,7 @@ static inline void* frontend_serve_msg_loop(void* arg) {
     while(1) {
         // Waiting status;
         if (rvt_socket_pop(fdMsg, &msg) != 0) {
-            printf("Fail to get msg from server.\n");
+            debugf("Fail to get msg from server.\n");
             exit(1);
         }
         if(msg == 0x0) { // Instruction Commit
@@ -263,7 +265,7 @@ static inline int backend_instruction_fetch(int fdInst, int coreIdx, rvt_pack_t*
     uint64_t msg;
     rvt_socket_push(fdInst, coreIdx);
     if (rvt_socket_pop(fdInst, &msg) != 0) {
-        printf("Fail to fetch inst response from server.\n");
+        debugf("Fail to fetch inst response from server.\n");
         exit(1);
     }
     if(msg == 0) {

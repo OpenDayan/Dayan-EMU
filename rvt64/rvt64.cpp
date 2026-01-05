@@ -1,3 +1,4 @@
+#include "debugf.hpp"
 #include "rvt64.hpp"
 #include "rvt64_helper.hpp"
 #include "swizzle.hpp"
@@ -13,7 +14,7 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        printf("RVT64: Enqueue RVT64 Instruction %lx!\n",inst->inst);
+        debugf("RVT64: Enqueue RVT64 Instruction %lx!\n",inst->inst);
         return 1;
     }
 
@@ -26,7 +27,7 @@ namespace RVTNG {
 
     ulong rvt64_t::helper_tcsr_xchg(ulong tcsr_id, ulong value, ulong mask) {
         if(tcsr_id > 8 * 8) {
-            printf("* Illgal id.\n");
+            debugf("* Illgal id.\n");
             return 0;
         }
         ulong* _tcsr = (uint64_t*) &this->tcsr;
@@ -58,26 +59,26 @@ namespace RVTNG {
                 cmt_pack.rd = rd;
                 cmt_pack.data = helper_tcsr_xchg(tcsr_id, inst.rs1, ~inst.rd);
                 commit(&cmt_pack);
-                printf("* nmask %lx -> %lx.\n", cmt_pack.data, inst.rs1);
+                debugf("* nmask %lx -> %lx.\n", cmt_pack.data, inst.rs1);
                 break;
             case 0b10000001: // tx.tcsr.xchg.mask
                 cmt_pack.timestamp = inst.timestamp;
                 cmt_pack.rd = rd;
                 cmt_pack.data = helper_tcsr_xchg(tcsr_id, inst.rs1, inst.rd);
                 commit(&cmt_pack);
-                printf("* mask %lx -> %lx.\n", cmt_pack.data, inst.rs1);
+                debugf("* mask %lx -> %lx.\n", cmt_pack.data, inst.rs1);
                 break;
             case 0b11111111: // tx.sb
                 if((inst.inst >> 52) & 0x1) {
                     // Bar
-                    printf("RVT64: scoreboard barrier %lx:\n", inst.rd);
+                    debugf("RVT64: scoreboard barrier %lx:\n", inst.rd);
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = rd;
                     cmt_pack.data = inst.rd;
                     commit(&cmt_pack);
                 } else {
                     // Produce
-                    printf("RVT64: scoreboard produce %lx:\n", inst.rd);
+                    debugf("RVT64: scoreboard produce %lx:\n", inst.rd);
                     scoreboard(inst.rd);
                 }
                 break;
@@ -135,7 +136,7 @@ namespace RVTNG {
                             uram, broadcast, inst.rs1, tcsr[tcfgrs1], inst.rs2, tcsr[tcfgrs2], inst.rd, tcsr[tcfgrs3]
                         );
                     } else {
-                        printf("RVT64: Unsupport tx.int subop==%d!\n", subop);
+                        debugf("RVT64: Unsupport tx.int subop==%d!\n", subop);
                         break;
                     }
                 }
@@ -161,7 +162,7 @@ namespace RVTNG {
                     );
                     break;
                 default:
-                    printf("RVT64: Unsupport tx.fp subop==%d!\n", subop);
+                    debugf("RVT64: Unsupport tx.fp subop==%d!\n", subop);
                     break;
                 }
                 break;
@@ -204,7 +205,7 @@ namespace RVTNG {
                         );
                     break;
                 default:
-                    printf("RVT64: Unsupport tx.sfu subop==%d!\n", subop);
+                    debugf("RVT64: Unsupport tx.sfu subop==%d!\n", subop);
                     break;
                 }
                 break;
@@ -239,12 +240,12 @@ namespace RVTNG {
                         );
                         break;
                     default:
-                        printf("RVT64: Unsupport tx.convert rs1type==%d, rs3type==%d!\n", rs1type, rs3type);
+                        debugf("RVT64: Unsupport tx.convert rs1type==%d, rs3type==%d!\n", rs1type, rs3type);
                         break;
                     }
                     break;
                 default:
-                    printf("RVT64: Unsupport tx.convert rs1type==%d!\n", rs1type);
+                    debugf("RVT64: Unsupport tx.convert rs1type==%d!\n", rs1type);
                     break;
                 }
                 break;
@@ -269,7 +270,7 @@ namespace RVTNG {
                     );
                     break;
                 default:
-                    printf("RVT64: Unsupport tx.int.reduce subop==%d!\n", subop);
+                    debugf("RVT64: Unsupport tx.int.reduce subop==%d!\n", subop);
                     break;
                 }
                 break;
@@ -294,12 +295,12 @@ namespace RVTNG {
                     );
                     break;
                 default:
-                    printf("RVT64: Unsupport tx.fp.reduce subop==%d!\n", subop);
+                    debugf("RVT64: Unsupport tx.fp.reduce subop==%d!\n", subop);
                     break;
                 }
                 break;
             default:
-                printf("RVT64: Unsupport Instruction %lx!\n",inst.inst);
+                debugf("RVT64: Unsupport Instruction %lx!\n",inst.inst);
                 break;
             }
         }

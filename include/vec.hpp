@@ -1,6 +1,7 @@
 #ifndef __VEC_H__
 #define __VEC_H__
 
+#include "debugf.hpp"
 #include "exec_unit.hpp"
 #include "thread_safe_queue.h"
 #include <vector>
@@ -55,7 +56,7 @@ struct ResQ {
 
     int get(int vb, int index){
         int realIndex = (head[vb] - index + RESQ_SIZE) % RESQ_SIZE;
-        // printf("%d %d %d %d\n", vb, head[vb], index, realIndex);
+        // debugf("%d %d %d %d\n", vb, head[vb], index, realIndex);
         return buffer[vb][realIndex];
     }
 };

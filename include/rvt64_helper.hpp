@@ -1,3 +1,4 @@
+#include "debugf.hpp"
 #include "rvt64.hpp"
 #include "swizzle.hpp"
 #include <atomic>
@@ -54,25 +55,25 @@ namespace RVTNG {
         {
             if(broadcast_0) {
                 if(a_tcsr.dim0 != 1 && b_tcsr.dim0 != 1) {
-                    printf("* Error: Broadcast 0 is not supported for non-1D arrays.\n");
+                    debugf("* Error: Broadcast 0 is not supported for non-1D arrays.\n");
                     return;
                 }
             }
             if(broadcast_1) {
                 if(a_tcsr.dim1 != 1 && b_tcsr.dim1 != 1) {
-                    printf("* Error: Broadcast 1 is not supported for non-1D arrays.\n");
+                    debugf("* Error: Broadcast 1 is not supported for non-1D arrays.\n");
                     return;
                 }
             }
             if(broadcast_2) {
                 if(a_tcsr.dim2 != 1 && b_tcsr.dim2 != 1) {
-                    printf("* Error: Broadcast 2 is not supported for non-1D arrays.\n");
+                    debugf("* Error: Broadcast 2 is not supported for non-1D arrays.\n");
                     return;
                 }
             }
             if(broadcast_3) {
                 if(a_tcsr.dim3 != 1 && b_tcsr.dim3 != 1) {
-                    printf("* Error: Broadcast 3 is not supported for non-1D arrays.\n");
+                    debugf("* Error: Broadcast 3 is not supported for non-1D arrays.\n");
                     return;
                 }
             }
@@ -182,7 +183,7 @@ namespace RVTNG {
             }
             break;
         default:
-            printf("* Error: Reduce dimension %d is not supported.\n", reduce_dim);
+            debugf("* Error: Reduce dimension %d is not supported.\n", reduce_dim);
             return;
         }
     }

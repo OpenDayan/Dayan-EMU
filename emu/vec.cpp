@@ -1,3 +1,4 @@
+#include "debugf.hpp"
 #include "common.hpp"
 #include "vec.hpp"
 #include "swizzle.hpp"
@@ -26,7 +27,7 @@ namespace RVTNG {
         int result;
         switch (op) {
         case 0: // TODO:
-            printf("VEC: add \n\t vrs1 %x, vrs2 %x\n", vrs1, vrs2);
+            debugf("VEC: add \n\t vrs1 %x, vrs2 %x\n", vrs1, vrs2);
             result = vrs1 + vrs2;
             resQ->enqueue(vb, result);
             break;
@@ -37,13 +38,13 @@ namespace RVTNG {
     void v_load_exec_once(ResQ* resQ, rvt_pack_t inst, uint64_t addr, uint64_t swizzleMBS, uint8_t* uram) {
         uint8_t vb = (inst.inst >> 25) & 0x1;
         uint32_t data = *(uint32_t *)(uram + swizzle_addr(addr, swizzleMBS));
-        printf("VEC: load \n\t swizzleAddr %lx, rdata %x\n", swizzle_addr(addr, swizzleMBS), data);
+        debugf("VEC: load \n\t swizzleAddr %lx, rdata %x\n", swizzle_addr(addr, swizzleMBS), data);
         resQ->enqueue(vb, data);
     }
     void v_store_exec_once(ResQ* resQ, rvt_pack_t inst, uint64_t addr, uint64_t swizzleMBS, uint8_t* uram) {
         uint8_t vb = (inst.inst >> 19) & 0x1; // vrs2的最高位
         int vrs2 = resQ->get(vb, (inst.inst >> 15) & 0xf);
-        printf("VEC: store \n\t swizzleAddr %lx, wdata %x\n", swizzle_addr(addr, swizzleMBS), vrs2);
+        debugf("VEC: store \n\t swizzleAddr %lx, wdata %x\n", swizzle_addr(addr, swizzleMBS), vrs2);
         *(uint32_t *)(uram + swizzle_addr(addr, swizzleMBS)) = (uint32_t)vrs2;
     }
     void vec_t::exec_once(rvt_pack_t inst) {
@@ -101,7 +102,7 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        printf("VEC: Enqueue VEC Instruction %x!\n",(uint32_t)inst->inst);
+        debugf("VEC: Enqueue VEC Instruction %x!\n",(uint32_t)inst->inst);
         return 1;
     }
     void vec_t::execute(void) {
@@ -117,9 +118,9 @@ namespace RVTNG {
                 CSR:
                 if(is_vec_tcsr_read | is_vec_tcsr_write) {
                     uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
-                    printf("VEC: tcsr read write %d:\n", tcsr_id);
+                    debugf("VEC: tcsr read write %d:\n", tcsr_id);
                     if(tcsr_id > 8 * 32) {
-                        printf("* Illgal id.\n");
+                        debugf("* Illgal id.\n");
                         continue;
                     }
                     uint64_t* _tcsr = (uint64_t*) &this->tcsr;
@@ -127,19 +128,19 @@ namespace RVTNG {
                         if((tcsr_id % 32) != 31)
                             _tcsr[tcsr_id] = inst.rd & ((1ull << this->tcsr_width[tcsr_id & 0x1f]) - 1);
                         this->tcsr[tcsr_id / 32].checksum += 1;
-                        printf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
+                        debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
                     } else {
                         rvt_commit_t cmt_pack;
                         cmt_pack.timestamp = inst.timestamp;
                         cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                         cmt_pack.data = _tcsr[tcsr_id];
                         commit(&cmt_pack);
-                        printf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
+                        debugf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
                     }
                     continue;
                 }
                 if(is_vec_sb_produce) {
-                    printf("VEC: scoreboard produce %lx:\n", inst.rd);
+                    debugf("VEC: scoreboard produce %lx:\n", inst.rd);
                     scoreboard(inst.rd);
                     continue;
                 }
@@ -148,7 +149,7 @@ namespace RVTNG {
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                     cmt_pack.data = inst.rd;
-                    printf("VEC: scoreboard bar %lx:\n", cmt_pack.rd);
+                    debugf("VEC: scoreboard bar %lx:\n", cmt_pack.rd);
                     commit(&cmt_pack);
                     continue;
                 }
@@ -158,13 +159,13 @@ namespace RVTNG {
                 int block = this->tcsr[0].block;
                 int dim0 = this->tcsr[0].dim0;
                 int dim1 = this->tcsr[0].dim1;
-                printf("VEC: block=%d, dim0=%d, dim1=%d\n", block, dim0, dim1);
+                debugf("VEC: block=%d, dim0=%d, dim1=%d\n", block, dim0, dim1);
 
                 bool isCsr = is_vec_tcsr_read | is_vec_tcsr_write | is_vec_sb_produce | is_vec_sb_bar;
 
                 if(mode == INNER_MODE) {
                     if(isCsr) {
-                        printf("VEC: block ended!\n");
+                        debugf("VEC: block ended!\n");
                         // 执行vec指令
                         for(int i = 0; i <= dim1; i++) {
                             for(int j =0; j <= dim0; j++) {
@@ -187,7 +188,7 @@ namespace RVTNG {
                     } else {
                         // 只压入不执行
                         this->inst_queue_block.push_back(inst);
-                        printf("VEC: block size %ld\n", this->inst_queue_block.size());
+                        debugf("VEC: block size %ld\n", this->inst_queue_block.size());
                     }
                 } else {
                     if(isCsr) {

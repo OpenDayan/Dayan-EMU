@@ -1,6 +1,8 @@
 #ifndef __SWIZZLE_H__
 #define __SWIZZLE_H__
 
+#include "debugf.hpp"
+
 // object SwizzleAddr {
 //   def apply(addr: UInt, S: UInt, B: UInt, M: UInt, maxMask : Int = 8): UInt = {
 //     require(addr.getWidth > maxMask)
@@ -27,7 +29,7 @@ namespace RVTNG {
             addr -= 0x10000000;
         }
         if(addr >= 1024ul * 1024ul) {
-            printf("Fault! URAM Overwrite!\n");
+            debugf("Fault! URAM Overwrite!\n");
             addr = 0;           
         }
         return addr;

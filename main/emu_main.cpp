@@ -1,3 +1,4 @@
+#include "debugf.hpp"
 #include "rvtng-intf.h"
 #include "exec_unit.hpp"
 #include "lsu.hpp"
@@ -33,12 +34,12 @@ int main(int argc, char** argv) {
     }
     // 父进程创建 server socket
     backend_init((int*)&fdMsg, (int*)&fdInst);
-    printf("Main: QEMU Ready!\n");
+    debugf("Main: QEMU Ready!\n");
     // 创建顶层
     auto top = RVTNG::exec_unit_t();
     // 绑定顶层提交函数
     top.register_commit_callback([fdMsg, &fdMsgMutex](const rvt_commit_t* pkg) {
-        // printf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
+        // debugf("* Commit: %lx -> %lx\n", pkg->data, pkg->rd);
         if(pkg->rd == 0) return;
         std::lock_guard<std::mutex> lock(fdMsgMutex);
         backend_instruction_commit(fdMsg, 0, pkg);
@@ -64,7 +65,7 @@ int main(int argc, char** argv) {
         cmt_pack.timestamp = inst->timestamp;
         cmt_pack.rd = (inst->inst >> 7) & 0x1f;
         auto p = sb.try_dequeue();
-        if(p != std::nullopt) printf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
+        if(p != std::nullopt) debugf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
         cmt_pack.data = p.value_or(0ul);
         top.commit(&cmt_pack);
         return 1ul;
@@ -82,8 +83,8 @@ int main(int argc, char** argv) {
         if(count) {
             ulong v = top.issue(&inst);
             if(v != 1) {
-                printf("Warning: Inst %lx Issued %ld times.\n", inst.inst, v);
+                debugf("Warning: Inst %lx Issued %ld times.\n", inst.inst, v);
             }
-        } else usleep(100); // 10kHz
+        }// else usleep(1); // 1MHz
     }
 }
