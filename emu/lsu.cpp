@@ -27,13 +27,14 @@ namespace RVTNG {
                                   + dim0  * tcsr->inDim0Stride
                                   + dim1  * tcsr->inDim1Stride
                                   + dim2  * tcsr->inDim2Stride;
-                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
+                                // std::lock_guard<std::mutex> lock(*fdMsgMutex);
                                 if(addr & 63) {
                                     // 非 64B 对齐的情况
                                     debugf("Fault! SRC DRAM Not Aligned with 64B!\n");
                                     return;
                                 }
-                                backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64, addr);
+                                // backend_dram_read(fdMsg, (char*)lsu_buffer + block * 64, 64, addr);
+                                memcpy((char*)lsu_buffer + block * 64, dram + addr - 0x80000000, 64);
                             }
                             for(uint64_t transfer = tcsr->requestPadding + 1; transfer < 64; transfer++) {
                                 lsu_buffer[block * 64 + transfer] = tcsr->paddingValue[transfer % 8];
@@ -72,8 +73,9 @@ namespace RVTNG {
                                     + dim0  * tcsr->outDim0Stride
                                     + dim1  * tcsr->outDim1Stride
                                     + dim2  * tcsr->outDim2Stride;
-                                std::lock_guard<std::mutex> lock(*fdMsgMutex);
-                                backend_dram_write(fdMsg, (char*)transfer_buf, 64, addr);
+                                // std::lock_guard<std::mutex> lock(*fdMsgMutex);
+                                // backend_dram_write(fdMsg, (char*)transfer_buf, 64, addr);
+                                memcpy(dram + addr - 0x80000000, transfer_buf, 64);
                                 if(addr & 63) {
                                     // 非 64B 对齐的情况
                                     debugf("Fault! DST DRAM Not Aligned with 64B!\n");
@@ -97,7 +99,7 @@ namespace RVTNG {
         debugf("LSU: 0x%08lx <- 0x%08lx\n", dst, src);
     }
 
-    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, int fdMsg, std::mutex* fdMsgMutex):fdMsgMutex(fdMsgMutex), fdMsg(fdMsg), uram(uram) {
+    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, uint8_t* dram):dram(dram), uram(uram) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &lsu_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);

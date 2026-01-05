@@ -16,6 +16,10 @@ int main(int argc, char** argv) {
     std::mutex fdMsgMutex;
     // 创建 URAM
     uint8_t* uram = (uint8_t *)backend_get_shm_ptr("/uram_shm_0", 1024 * 1024);
+    // 创建 DRAM
+    uint8_t* dram = (uint8_t *)backend_get_shm_ptr("/dram_shm_0", 16ul * 1024ul * 1024ul * 1024ul);
+    printf("Note: 如果模拟器启动失败并返回信号：SIGBUS，则说明 Shared Memory 没有正确创建。\n请执行命令： sudo mount -o remount,size=32G /dev/shm\n");
+    dram[0x100000000ul - 1] = 0x0; // Check Shared DRAM Status
     // 创建 QEMU 子进程
     pid_t qemuPid = fork();
     if (qemuPid == -1) {
@@ -50,7 +54,7 @@ int main(int argc, char** argv) {
         sb.enqueue(entry);
     });
     // 创建 LSU
-    auto lsu = RVTNG::lsu_t(&top, uram, fdMsg, &fdMsgMutex);
+    auto lsu = RVTNG::lsu_t(&top, uram, dram);
     // 创建 MAT
     auto mat = RVTNG::mat_t(&top, uram);
     // 创建 VEC

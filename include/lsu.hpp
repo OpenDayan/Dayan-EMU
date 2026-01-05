@@ -33,7 +33,7 @@ struct lsu_tcsr_t {
 class lsu_t: exec_unit_t {
 public:
     ulong issue(const rvt_pack_t* inst) override;
-    lsu_t(exec_unit_t* parrent, uint8_t *uram, int fdMsg, std::mutex *fdMsgMutex);
+    lsu_t(exec_unit_t* parrent, uint8_t *uram, uint8_t *dram);
     void execute(void);  // 独占循环
 
 protected:
@@ -51,12 +51,10 @@ protected:
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
         20
     };
-    // 锁
-    std::mutex* fdMsgMutex;
-    // 调用 dram read 时使用的掩码
-    int fdMsg;
     // uram buffer
     uint8_t* uram;
+    // dram
+    uint8_t* dram;
 };
 
 }

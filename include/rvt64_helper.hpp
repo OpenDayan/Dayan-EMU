@@ -22,22 +22,22 @@ namespace RVTNG {
 
     template<typename T>
     static inline void rvt64_write_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr, const T& data) {
-        memcpy(
-            rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr), 
-            (void*)&data,
-            sizeof(T)
-        );
+        // memcpy(
+        //     rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr), 
+        //     (void*)&data,
+        //     sizeof(T)
+        // );
+        *(T*)rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr) = data;
     }
 
     template<typename T>
     static inline T rvt64_read_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr) {
-        T data;
-        memcpy(
-            (void*)&data,
-            rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr),
-            sizeof(T)
-        );
-        return data;
+        // memcpy(
+        //     (void*)&data,
+        //     rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr),
+        //     sizeof(T)
+        // );
+        return  *(T*)rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr);;
     }
 
     template<typename TIN, typename TOUT, typename FUNC>
