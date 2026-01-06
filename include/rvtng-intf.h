@@ -16,7 +16,7 @@
 #ifndef RVTNG_INTF_H
 #define RVTNG_INTF_H
 
-#include "debugf.hpp"
+#include "utils.hpp"
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,7 +1,7 @@
 #ifndef __SWIZZLE_H__
 #define __SWIZZLE_H__
 
-#include "debugf.hpp"
+#include "utils.hpp"
 
 // object SwizzleAddr {
 //   def apply(addr: UInt, S: UInt, B: UInt, M: UInt, maxMask : Int = 8): UInt = {

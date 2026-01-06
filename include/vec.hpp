@@ -1,7 +1,7 @@
 #ifndef __VEC_H__
 #define __VEC_H__
 
-#include "debugf.hpp"
+#include "utils.hpp"
 #include "exec_unit.hpp"
 #include "thread_safe_queue.h"
 #include <vector>
