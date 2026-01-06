@@ -109,6 +109,8 @@ namespace RVTNG {
         while(1) {
             // Fetch
             auto inst = inst_queue.dequeue();
+            // Fence
+            MFENCE();
             // Decode
             bool is_vec_tcsr_write = (inst.inst & 0xfe004000) == 0x02000000;
             bool is_vec_tcsr_read  = (inst.inst & 0xfe004000) == 0x02004000;

@@ -20,13 +20,15 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        debugf("MAT: Enqueue MAT Instruction %x!\n",(uint32_t)inst->inst);
+        // debugf("MAT: Enqueue MAT Instruction %x!\n",(uint32_t)inst->inst);
         return 1;
     }
     void mat_t::execute(void) {
         while(1) {
             // Fetch
             auto inst = inst_queue.dequeue();
+            // Fence
+            MFENCE();
             // Decode
             bool is_mat_tcsr_write = (inst.inst & 0xfe004000) == 0x00000000;
             bool is_mat_tcsr_read  = (inst.inst & 0xfe004000) == 0x00004000;
@@ -76,6 +78,7 @@ namespace RVTNG {
                 uint64_t b = inst.rs2;
                 uint64_t c = inst.rd;
                 if(tcsr[group].dataType == 0) {
+                    debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
                     execute_mm_bf16_once(tcsr + group, a, b, c, !((inst.inst >> 12) & 0x1));
                 } else {
                     debugf("MAT: FIXME, add support for type %ld!\n", tcsr[group].dataType);
@@ -143,6 +146,6 @@ namespace RVTNG {
                 }
             }
         }
-        debugf("MAT: 0x%05lx = 0x%05lx @ 0x%05lx\n", c, a, b);
+        debugf("MAT: 0x%08lx = 0x%08lx @ 0x%08lx\n", c, a, b);
     }
 }

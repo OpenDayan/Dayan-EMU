@@ -14,7 +14,7 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        debugf("RVT64: Enqueue RVT64 Instruction %lx!\n",inst->inst);
+        // debugf("RVT64: Enqueue RVT64 Instruction %lx!\n",inst->inst);
         return 1;
     }
 
@@ -41,6 +41,8 @@ namespace RVTNG {
             rvt_commit_t cmt_pack;
             // Fetch
             auto inst = inst_queue.dequeue();
+            // Fence
+            MFENCE();
             // Decode
             uint8_t func = inst.inst >> 56;
             uint16_t tcsr_id = (inst.inst >> 32) & 0x3ff;
@@ -210,6 +212,7 @@ namespace RVTNG {
                 }
                 break;
             case 0b10001110: // tx.convert
+                debugf("RVT64: Convert DST(0x%08lx) <- SRC(0x%08lx)\n", inst.rd, inst.rs1);
                 // 目前仅支持 FP -> S32 / BF16 / FP16 / FP8E4M3 的转换
                 switch (rs1type) {
                 case 0b1001100: // FP32

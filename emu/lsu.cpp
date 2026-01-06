@@ -115,13 +115,15 @@ namespace RVTNG {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
-        debugf("LSU: Enqueue LSU Instruction %x!\n",(uint32_t)inst->inst);
+        // debugf("LSU: Enqueue LSU Instruction %x!\n",(uint32_t)inst->inst);
         return 1;
     }
     void lsu_t::execute(void) {
         while(1) {
             // Fetch
             auto inst = inst_queue.dequeue();
+            // Fence
+            MFENCE();
             // Decode
             bool is_dma_tcsr_write = (inst.inst & 0xfe004000) == 0x04000000;
             bool is_dma_tcsr_read  = (inst.inst & 0xfe004000) == 0x04004000;
