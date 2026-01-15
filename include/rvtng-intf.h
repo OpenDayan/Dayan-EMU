@@ -54,14 +54,14 @@ int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg);
 
 static inline void backend_init(int* fdMsg, int* fdInst) {
     int retry = 0;
-    while((*fdMsg = rvt_socket_client_init("/tmp/rv_frontend_msg")) == -1) {
+    while((*fdMsg = rvt_socket_client_init("/tmp/card0_rvt_msg")) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Backend Init msg client Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInst = rvt_socket_server_init("/tmp/rv_frontend_inst")) == -1) {
+    while((*fdInst = rvt_socket_server_init("/tmp/card0_rvt_inst")) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
@@ -72,14 +72,14 @@ static inline void backend_init(int* fdMsg, int* fdInst) {
 
 static inline void frontend_init(int* fdMsg, int* fdInst) {
     int retry = 0;
-    while((*fdMsg = rvt_socket_server_init("/tmp/rv_frontend_msg")) == -1) {
+    while((*fdMsg = rvt_socket_server_init("/tmp/card0_rvt_msg")) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Frontend Init msg server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInst = rvt_socket_client_init("/tmp/rv_frontend_inst")) == -1) {
+    while((*fdInst = rvt_socket_client_init("/tmp/card0_rvt_inst")) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
