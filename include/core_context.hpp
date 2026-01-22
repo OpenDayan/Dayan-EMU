@@ -28,7 +28,7 @@ public:
     std::atomic<bool> running;
 
     // Constructor: Initialize all core components
-    core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram);
+    core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram, uint8_t* uram);
 
     // Destructor: Clean up resources
     ~core_context_t();

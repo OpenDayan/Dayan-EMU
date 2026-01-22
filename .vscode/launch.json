@@ -5,7 +5,7 @@
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/bin/rvt_emulator",
-        "args": [],
+        "args": ["-c", "2"],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",
         "environment": [],

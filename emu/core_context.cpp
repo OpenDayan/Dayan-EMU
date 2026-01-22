@@ -1,18 +1,8 @@
 #include "core_context.hpp"
 
 // Constructor: Initialize all core components
-core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram)
-    : core_id(id), uram(nullptr), running(true) {
-    
-    // Create per-core URAM
-    char uram_shm_name[64];
-    snprintf(uram_shm_name, sizeof(uram_shm_name), "/uram_shm_%d", id);
-    uram = (uint8_t *)backend_get_shm_ptr(uram_shm_name, 1024 * 1024);
-    if(uram == nullptr) {
-        fprintf(stderr, "Error: Failed to create URAM for core %d\n", id);
-        throw std::runtime_error("Failed to create URAM");
-    }
-    printf("Core %d: Created URAM '%s' at %p\n", id, uram_shm_name, uram);
+core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram, uint8_t* uram)
+    : core_id(id), uram(uram), running(true) {
 
     // Create top-level execution unit
     top = std::make_unique<RVTNG::exec_unit_t>();

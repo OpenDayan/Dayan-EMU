@@ -95,6 +95,20 @@ int main(int argc, char** argv) {
     printf("Note: If the emulator fails to start with SIGBUS signal, it means Shared Memory is not properly created.\nPlease run: sudo mount -o remount,size=32G /dev/shm\n");
     dram[0x100000000ul - 1] = 0x0; // Check Shared DRAM Status
 
+    uint8_t* uram[num_cores];
+    // Create URAM (Per-core)
+    for(int i = 0 ; i < num_cores; i ++) {
+        // Create per-core URAM
+        char uram_shm_name[64];
+        snprintf(uram_shm_name, sizeof(uram_shm_name), "/uram_shm_%d", i);
+        uram[i] = (uint8_t *)backend_get_shm_ptr(uram_shm_name, 1024 * 1024);
+        if(uram[i] == nullptr) {
+            fprintf(stderr, "Error: Failed to create URAM for core %d\n", i);
+            throw std::runtime_error("Failed to create URAM");
+        }
+        printf("Core %d: Created URAM '%s' at %p\n", i, uram_shm_name, uram[i]);
+    }
+
     // Convert core count to string (for -smp parameter)
     std::string smp_arg = std::to_string(num_cores);
 
@@ -144,7 +158,7 @@ int main(int argc, char** argv) {
     for(int i = 0; i < num_cores; i++) {
         try {
             cores.push_back(std::make_unique<core_context_t>(
-                i, fdMsg, fdMsgMutex, dram));
+                i, fdMsg, fdMsgMutex, dram, uram[i]));
         } catch(const std::exception& e) {
             fprintf(stderr, "Error: Failed to create core %d: %s\n", i, e.what());
             return 1;
