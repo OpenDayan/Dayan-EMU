@@ -9,7 +9,6 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t*
 
     // Register Commit callback (using this core's core_id)
     top->register_commit_callback([fdMsg, &msgMutex, core_id = id](const rvt_commit_t* pkg) {
-        if(pkg->rd == 0) return;
         std::lock_guard<std::mutex> lock(msgMutex);
         backend_instruction_commit(fdMsg, core_id, pkg);
     });
@@ -28,15 +27,21 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t*
 
     // Register Scoreboard Issue callback
     top->register_issue_callback([top_ptr = top.get(), &sb = *scoreboard](const rvt_pack_t* inst) {
-        bool is_sb = (inst->inst & 0xfe000000) == 0x0e000000;
+        bool is_sb = (inst->inst & 0b11111111111111111110000000000000) == 0b00000000000000000000000000000000;
         if(!is_sb) return 0ul;
-        rvt_commit_t cmt_pack;
-        cmt_pack.timestamp = inst->timestamp;
-        cmt_pack.rd = (inst->inst >> 7) & 0x1f;
-        auto p = sb.try_dequeue();
-        if(p != std::nullopt) debugf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
-        cmt_pack.data = p.value_or(0ul);
-        top_ptr->commit(&cmt_pack);
+        if(inst->inst & 0b1000000000000) {
+            rvt_commit_t cmt_pack;
+            cmt_pack.timestamp = inst->timestamp;
+            cmt_pack.rd = (inst->inst >> 7) & 0x1f;
+            auto p = sb.try_dequeue();
+            if(p != std::nullopt) debugf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
+            cmt_pack.data = p.value_or(0ul);
+            top_ptr->commit(&cmt_pack);
+        } else {
+            // sb.enqueue(entry);
+            // DO NOTHING
+            ;;
+        }
         return 1ul;
     });
 
