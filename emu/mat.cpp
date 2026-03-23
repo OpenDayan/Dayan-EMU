@@ -3,6 +3,7 @@
 #include "mat.hpp"
 #include "fputils.hpp"
 #include "swizzle.hpp"
+#include "rvt_decoder.hpp"
 
 namespace RVTNG {
     mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram):uram(uram) {
@@ -13,8 +14,10 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     ulong mat_t::issue(const rvt_pack_t* inst) {
-        bool is_mat_tcsr = (inst->inst & 0xf600007f) == (0x000000000 | RVTNG_OPCODE);
-        bool is_mat = is_mat_tcsr | ((inst->inst & 0xf000007f) == (0x10000000 | RVTNG_OPCODE));
+        uint32_t unit = (inst->inst >> 23) & 0x1f;
+        uint32_t tcsr_id = (inst->inst >> 13) & 0x3ff;
+        bool is_mat_tcsr = rvt::is_base(inst->inst) && (unit == RVT_UNIT_MAT || (unit== RVT_UNIT_BASE && tcsr_id == RVT_UNIT_MAT));
+        bool is_mat = rvt::is_mat(inst->inst) | is_mat_tcsr;
         if(!is_mat) {
             // ignore
             return 0;
@@ -30,10 +33,12 @@ namespace RVTNG {
             // Fence
             MFENCE();
             // Decode
-            bool is_mat_tcsr_write = (inst.inst & 0xfe004000) == 0x00000000;
-            bool is_mat_tcsr_read  = (inst.inst & 0xfe004000) == 0x00004000;
-            bool is_mat_sb_produce = (inst.inst & 0xfe004000) == 0x08000000;
-            bool is_mat_sb_bar     = (inst.inst & 0xfe004000) == 0x08004000;
+            uint32_t unit = (inst.inst >> 23) & 0x1f;
+            uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
+            bool is_mat_tcsr_write = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT && ((inst.inst >> 12) & 0x1) == 0;
+            bool is_mat_tcsr_read  = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT && ((inst.inst >> 12) & 0x1) == 1;
+            bool is_mat_sb_produce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 0;
+            bool is_mat_sb_bar     = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 1;
             if(is_mat_tcsr_write | is_mat_tcsr_read) {
                 uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
                 debugf("MAT: tcsr read write %d:\n", tcsr_id);

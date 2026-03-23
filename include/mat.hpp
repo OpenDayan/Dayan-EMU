@@ -19,7 +19,9 @@ struct mat_tcsr_t {
     uint64_t cSwizzleMBS;
     uint64_t persistentMode;
     uint64_t dataType;
-    uint64_t pad[20];
+    uint64_t aScaleStride;
+    uint64_t bScaleStride;
+    uint64_t pad[18];
     uint64_t checksum;
 };
 

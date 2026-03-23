@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include "lsu.hpp"
 #include "swizzle.hpp"
+#include "rvt_decoder.hpp"
 #include <atomic>
 #include <thread>
 
@@ -108,8 +109,10 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     ulong lsu_t::issue(const rvt_pack_t* inst) {
-        bool is_dma_tcsr = (inst->inst & 0xf600007f) == (0x04000000 | RVTNG_OPCODE);
-        bool is_dma = is_dma_tcsr | ((inst->inst & 0xe000007f) == (0x20000000 | RVTNG_OPCODE));
+        uint32_t unit = (inst->inst >> 23) & 0x1f;
+        uint32_t tcsr_id = (inst->inst >> 13) & 0x3ff;
+        bool is_dma_tcsr = rvt::is_base(inst->inst) && (unit == RVT_UNIT_LSU || (unit== RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU));
+        bool is_dma = rvt::is_lsu(inst->inst) | is_dma_tcsr;
         if(!is_dma) {
             // ignore
             return 0;
@@ -125,12 +128,13 @@ namespace RVTNG {
             // Fence
             MFENCE();
             // Decode
-            bool is_dma_tcsr_write = (inst.inst & 0xfe004000) == 0x04000000;
-            bool is_dma_tcsr_read  = (inst.inst & 0xfe004000) == 0x04004000;
-            bool is_dma_sb_produce = (inst.inst & 0xfe004000) == 0x0c000000;
-            bool is_dma_sb_bar     = (inst.inst & 0xfe004000) == 0x0c004000;
+            uint32_t unit = (inst.inst >> 23) & 0x1f;
+            uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
+            bool is_dma_tcsr_write = rvt_is_base(inst.inst) && unit == RVT_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 0;
+            bool is_dma_tcsr_read  = rvt_is_base(inst.inst) && unit == RVT_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 1;
+            bool is_dma_sb_produce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 0;
+            bool is_dma_sb_bar     = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 1;
             if(is_dma_tcsr_write | is_dma_tcsr_read) {
-                uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
                 debugf("LSU: tcsr read write %d:\n", tcsr_id);
                 if(tcsr_id > 8 * 32) {
                     debugf("* Illgal id.\n");
