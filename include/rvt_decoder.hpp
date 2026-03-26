@@ -260,17 +260,19 @@
 // Data Type Encodings
 //=============================================================================
 
-#define RVT_TYPE_INT32   0x00
-#define RVT_TYPE_INT16   0x01
-#define RVT_TYPE_INT8    0x02
-#define RVT_TYPE_UINT32  0x10
-#define RVT_TYPE_UINT16  0x11
-#define RVT_TYPE_UINT8   0x12
-#define RVT_TYPE_FP32    0x20
-#define RVT_TYPE_FP16    0x21
-#define RVT_TYPE_BF16    0x22
-#define RVT_TYPE_FP8_E4M3 0x23
-#define RVT_TYPE_FP8_E5M2 0x24
+#define RVT_TYPE_FP32        0b000000
+#define RVT_TYPE_BF16        0b000010
+#define RVT_TYPE_FP16        0b000011
+#define RVT_TYPE_FP8_E4M3    0b000100
+#define RVT_TYPE_FP8_E5M2    0b000101
+#define RVT_TYPE_MX_FP8_E4M3 0b000110
+#define RVT_TYPE_MX_FP8_E5M2 0b000111
+#define RVT_TYPE_S32         0b010000
+#define RVT_TYPE_U32         0b010001
+#define RVT_TYPE_S16         0b010010
+#define RVT_TYPE_U16         0b010011
+#define RVT_TYPE_S8          0b010100
+#define RVT_TYPE_U8          0b010101
 
 //=============================================================================
 // Instruction Classification

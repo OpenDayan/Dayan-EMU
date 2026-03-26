@@ -100,7 +100,7 @@ namespace RVTNG {
         debugf("LSU: 0x%08lx <- 0x%08lx\n", dst, src);
     }
 
-    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, uint8_t* dram):dram(dram), uram(uram) {
+    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, uint8_t* dram):uram(uram), dram(dram) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &lsu_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);

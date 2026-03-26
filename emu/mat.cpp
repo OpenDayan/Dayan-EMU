@@ -40,7 +40,6 @@ namespace RVTNG {
             bool is_mat_sb_produce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 0;
             bool is_mat_sb_bar     = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 1;
             if(is_mat_tcsr_write | is_mat_tcsr_read) {
-                uint32_t tcsr_id = (inst.inst >> 15) & 0x3ff;
                 debugf("MAT: tcsr read write %d:\n", tcsr_id);
                 if(tcsr_id > 8 * 32) {
                     debugf("* Illgal id.\n");
