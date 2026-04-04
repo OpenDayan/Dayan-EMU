@@ -83,7 +83,7 @@ namespace RVTNG {
                 uint64_t c = inst.rd;
                 if(tcsr[group].dataType == 0) {
                     debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
-                    execute_mm_bf16_once(tcsr + group, a, b, c, !((inst.inst >> 12) & 0x1));
+                    execute_mm_bf16_once(tcsr + group, a, b, c, ((inst.inst >> 12) & 0x1));
                 } else {
                     debugf("MAT: FIXME, add support for type %ld!\n", tcsr[group].dataType);
                 }

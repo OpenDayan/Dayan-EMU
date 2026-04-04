@@ -48,7 +48,7 @@
 #define RVT32_RD(inst)        RVT_BITS(inst, 11, 7)
 #define RVT32_RS1(inst)       RVT_BITS(inst, 19, 15)
 #define RVT32_RS2(inst)       RVT_BITS(inst, 24, 20)
-#define RVT32_FUNCT3(inst)    RVT_BITS(inst, 14, 12)
+#define RVT32_FUNCT3(inst)    RVT_BITS(inst, 31, 29)
 #define RVT32_FUNCT5(inst)    RVT_BITS(inst, 31, 27)
 #define RVT32_FUNCT7(inst)    RVT_BITS(inst, 31, 25)
 
@@ -92,7 +92,7 @@
 //   [26:23] unit id
 //   [31:27] funct5 = 00000
 
-#define RVT_BASE_TCSR_MASK       0xF8000FFFULL
+#define RVT_BASE_TCSR_MASK       0xF800007FULL
 #define RVT_BASE_TCSR_PATTERN    0x0000000BULL
 
 #define IS_RVT_BASE_TCSR(inst) \
@@ -130,7 +130,7 @@
 //   [31:25] funct7 = 0000100
 
 #define RVT_LSU_DMA_MASK        0xFF80407FULL
-#define RVT_LSU_DMA_PATTERN     0x0400000BULL
+#define RVT_LSU_DMA_PATTERN     0x0800000BULL
 
 #define IS_RVT_LSU_DMA(inst) \
     (IS_RVT_32(inst) && RVT_MATCH(inst, RVT_LSU_DMA_MASK, RVT_LSU_DMA_PATTERN))
