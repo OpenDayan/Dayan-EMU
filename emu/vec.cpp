@@ -95,15 +95,7 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     ulong vec_t::issue(const rvt_pack_t* inst) {
-        bool is_vec_tcsr = (inst->inst & 0xf600007f) == (0x02000000 | RVTNG_OPCODE);
-        bool is_vec = is_vec_tcsr | ((inst->inst & 0xe000007f) == (0x80000000 | RVTNG_OPCODE)) | ((inst->inst & 0xe000007f) == (0x40000000 | RVTNG_OPCODE));
-        if(!is_vec) {
-            // ignore
-            return 0;
-        }
-        this->inst_queue.enqueue(*inst);
-        debugf("VEC: Enqueue VEC Instruction %x!\n",(uint32_t)inst->inst);
-        return 1;
+        return 0;
     }
     void vec_t::execute(void) {
         while(1) {

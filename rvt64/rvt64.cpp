@@ -188,7 +188,6 @@ namespace RVTNG {
                     case RVT_MACRO_EXT_SFU:
                         switch (operation) {
                             case TX_SFU_LOG2: // tx.sfu.log2
-                                printf("SFU LOG2\n");
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return log2f(x); },
                                         uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
