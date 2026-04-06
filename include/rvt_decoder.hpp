@@ -281,14 +281,23 @@
 // Check if instruction is from a specific category
 #define IS_RVT_BASE(inst)  (IS_RVT_BASE_TCSR(inst))
 #define IS_RVT_LSU(inst)   (IS_RVT_LSU_DMA(inst))
-#define IS_RVT_MAT(inst)   (IS_RVT_MAT_MM_FAMILY(inst) || IS_RVT_MAT_SETPTR(inst))
+#define IS_RVT_MAT(inst)   (IS_RVT_MAT_MM_FAMILY(inst))
 #define IS_RVT_MACRO(inst) (IS_RVT_64(inst))
 
-// Check if instruction is synchronous
-#define IS_RVT_SYNC(inst)  (IS_RVT_BASE_TCSR(inst))
+// 元素运算操作编码
+#define TX_ELEM_ADD 0x00  // 0b000000
+#define TX_ELEM_SUB 0x01  // 0b000001
+#define TX_ELEM_MUL 0x02  // 0b000010
+#define TX_ELEM_MAX 0x04  // 0b000100 - 浮点最大值
+#define TX_ELEM_MIN 0x05  // 0b000101 - 浮点最小值
 
-// Check if instruction is asynchronous
-#define IS_RVT_ASYNC(inst) (IS_RVT_LSU(inst) || IS_RVT_MAT(inst) || IS_RVT_MACRO(inst))
+// SFU 操作编码
+#define TX_SFU_LOG2 0   // 0b00000000 - ReLU
+#define TX_SFU_EXP2 1   // 0b00000001 - 指数
+#define TX_SFU_SIN  2   // 0b00000010 - 正弦
+#define TX_SFU_COS  3   // 0b00000011 - 余弦
+#define TX_SFU_RSQRT 4  // 0b00000100 - 平方根倒数
+#define TX_SFU_RECIP 5  // 0b00000101 - 倒数
 
 //=============================================================================
 // Helper Functions (C++ inline functions for safer type handling)
@@ -314,8 +323,8 @@ static inline int rvt_is_mat(uint32_t inst) { return IS_RVT_MAT(inst); }
 static inline int rvt_is_macro(uint64_t inst) { return IS_RVT_MACRO(inst); }
 
 // Sync/Async checks
-static inline int rvt_is_sync(uint32_t inst) { return IS_RVT_SYNC(inst); }
-static inline int rvt_is_async(uint32_t inst) { return IS_RVT_ASYNC(inst); }
+// static inline int rvt_is_sync(uint32_t inst) { return IS_RVT_SYNC(inst); }
+// static inline int rvt_is_async(uint32_t inst) { return IS_RVT_ASYNC(inst); }
 
 // Field extractors with type safety
 static inline uint32_t rvt_bits(uint64_t inst, int hi, int lo) {
@@ -345,8 +354,8 @@ static inline bool is_mat(uint32_t inst) { return rvt_is_mat(inst) != 0; }
 static inline bool is_macro(uint64_t inst) { return rvt_is_macro(inst) != 0; }
 
 // Sync/Async checks
-static inline bool is_sync(uint32_t inst) { return rvt_is_sync(inst) != 0; }
-static inline bool is_async(uint32_t inst) { return rvt_is_async(inst) != 0; }
+// static inline bool is_sync(uint32_t inst) { return rvt_is_sync(inst) != 0; }
+// static inline bool is_async(uint32_t inst) { return rvt_is_async(inst) != 0; }
 
 // Field extractors with type safety
 static inline uint32_t bits(uint64_t inst, int hi, int lo) {

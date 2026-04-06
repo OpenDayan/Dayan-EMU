@@ -51,7 +51,6 @@ protected:
         20
     };
     // TCSR Helper
-    ulong helper_tcsr_xchg(ulong tcsr_id, ulong value, ulong mask);
 };
 
 }
