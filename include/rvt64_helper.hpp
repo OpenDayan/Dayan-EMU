@@ -9,10 +9,10 @@
 
 namespace RVTNG {
 
-    template<typename T>
-    static inline void* rvt64_get_uram_ptr(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr, int src, uint32_t type_size) {
-        int stride0, stride1, stride2, stride3;
-        stride0 = type_size;
+    template<typename T, long src>
+    static inline void* rvt64_get_uram_ptr(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr) {
+        ulong stride0, stride1, stride2, stride3;
+        stride0 = sizeof(T);
         switch (src) {
             case 0:
                 stride1 = tcsr.Src0Dim1Stride;
@@ -43,53 +43,33 @@ namespace RVTNG {
         return (void*)(uram + addr);
     }
 
-    template<typename T>
-    static inline void rvt64_write_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr, int src, uint32_t type_size, const T& data) {
-        // memcpy(
-        //     rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr), 
-        //     (void*)&data,
-        //     sizeof(T)
-        // );
-        *(T*)rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr, src, type_size) = data;
+    template<typename T, ulong src>
+    static inline void rvt64_write_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr, const T& data) {
+        *(T*)rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr) = data;
     }
 
-    template<typename T>
-    static inline T rvt64_read_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr, int src, uint32_t type_size) {
-        // memcpy(
-        //     (void*)&data,
-        //     rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr),
-        //     sizeof(T)
-        // );
-        return  *(T*)rvt64_get_uram_ptr<T>(uram, base, dim0, dim1, dim2, dim3, tcsr, src, type_size);;
+    template<typename T, ulong src>
+    static inline T rvt64_read_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr) {
+        return  *(T*)rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr);
     }
 
     template<typename TIN, typename TOUT, typename FUNC>
     static inline void rvt64_handle_binary_operation(
         FUNC func,
         uint8_t* uram, ulong broadcast,
-        ulong a_base, ulong b_base, ulong c_base, const rvt64_tcsr_t& tcsr, uint32_t data_size) {
-        // Check broadcast
-        {
-            if(broadcast) {
-                if(tcsr.dim0 != 1) {
-                    debugf("* Error: Broadcast 0 is not supported for non-1D arrays.\n");
-                    return;
-                }
-            }
-        }
+        ulong a_base, ulong b_base, ulong c_base, const rvt64_tcsr_t& tcsr) {
         for(ulong dim3 = 0; dim3 <= tcsr.dim3; dim3++) {
             for(ulong dim2 = 0; dim2 <= tcsr.dim2; dim2++) {
                 for(ulong dim1 = 0; dim1 <= tcsr.dim1; dim1++) {
                     for(ulong dim0 = 0; dim0 <= tcsr.dim0; dim0++) {
-                        TIN a = rvt64_read_uram<TIN>(uram, a_base, dim0, dim1, dim2, dim3, tcsr, 0, data_size);
-                        TIN b = rvt64_read_uram<TIN>(uram, b_base, 
+                        TIN a = rvt64_read_uram<TIN, 0>(uram, a_base, 
                             broadcast ? 0 : dim0, 
                             dim1,
                             dim2,
-                            dim3, tcsr, 1, data_size);
+                            dim3, tcsr);
+                        TIN b = rvt64_read_uram<TIN, 1>(uram, b_base, dim0, dim1, dim2, dim3, tcsr);
                         TOUT c = func(a, b);
-                        // printf("%f %f %f\n", (float)a, (float)b, (float)c);
-                        rvt64_write_uram<TOUT>(uram, c_base, dim0, dim1, dim2, dim3, tcsr, 2, data_size, c);    
+                        rvt64_write_uram<TOUT, 2>(uram, c_base, dim0, dim1, dim2, dim3, tcsr, c);    
                     }
                 }
             }
@@ -101,37 +81,59 @@ namespace RVTNG {
     static inline void rvt64_handle_unary_operation(
         FUNC func,
         uint8_t* uram,
-        ulong x_base, ulong y_base, const rvt64_tcsr_t& tcsr, uint32_t src_data_size, uint32_t dst_data_size)
+        ulong x_base, ulong y_base, const rvt64_tcsr_t& tcsr)
     {
         for(ulong dim3 = 0; dim3 <= tcsr.dim3; dim3++) {
             for(ulong dim2 = 0; dim2 <= tcsr.dim2; dim2++) {
                 for(ulong dim1 = 0; dim1 <= tcsr.dim1; dim1++) {
                     for(ulong dim0 = 0; dim0 <= tcsr.dim0; dim0++) {
-                        TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, tcsr, 0, src_data_size);
+                        TIN x = rvt64_read_uram<TIN, 0>(uram, x_base, dim0, dim1, dim2, dim3, tcsr);
                         TOUT y = func(x);
-                        // printf("%f %f\n", (float)x, (float)y);
-                        rvt64_write_uram<TOUT>(uram, y_base, dim0, dim1, dim2, dim3, tcsr, 2, dst_data_size, y);
+                        rvt64_write_uram<TOUT, 2>(uram, y_base, dim0, dim1, dim2, dim3, tcsr, y);
                     }
                 }
             }
         }
     }
 
-    
     template<typename TIN, typename TOUT, typename FUNC>
     static inline void rvt64_handle_reduce_operation(
-        FUNC func, TIN init_value,
-        uint8_t* uram, ulong x_base, ulong y_base, const rvt64_tcsr_t& tcsr, uint32_t data_size)
+        FUNC func, uint8_t* uram, ulong x_base, ulong y_base, const rvt64_tcsr_t& tcsr)
     {
         for(ulong dim3 = 0; dim3 <= tcsr.dim3; dim3++) {
             for(ulong dim2 = 0; dim2 <= tcsr.dim2; dim2++) {
                 for(ulong dim1 = 0; dim1 <= tcsr.dim1; dim1++) {
-                    TIN acc = init_value;
-                    for(ulong dim0 = 0; dim0 <= tcsr.dim0; dim0++) {
-                        TIN x = rvt64_read_uram<TIN>(uram, x_base, dim0, dim1, dim2, dim3, tcsr, 0, data_size);
+                    TIN acc = rvt64_read_uram<TIN, 0>(uram, x_base, 0, dim1, dim2, dim3, tcsr);
+                    for(ulong dim0 = 1; dim0 <= tcsr.dim0; dim0++) {
+                        TIN x = rvt64_read_uram<TIN, 0>(uram, x_base, dim0, dim1, dim2, dim3, tcsr);
                         acc = func(acc, x);
                     }
-                    rvt64_write_uram<TOUT>(uram, y_base, 0, dim1, dim2, dim3, tcsr, 2, data_size, acc);
+                    rvt64_write_uram<TOUT, 2>(uram, y_base, 0, dim1, dim2, dim3, tcsr, acc);
+                }
+            }
+        }
+    }
+
+    template<typename TIN, typename TOUT, typename FUNC>
+    static inline void rvt64_handle_reduce_index_operation(
+        FUNC cmp,
+        uint8_t* uram, ulong need_idx,
+        ulong x_base, ulong i_base, ulong y_base, const rvt64_tcsr_t& tcsr)
+    {
+        for(ulong dim3 = 0; dim3 <= tcsr.dim3; dim3++) {
+            for(ulong dim2 = 0; dim2 <= tcsr.dim2; dim2++) {
+                for(ulong dim1 = 0; dim1 <= tcsr.dim1; dim1++) {
+                    TIN acc = rvt64_read_uram<TIN, 0>(uram, x_base, 0, dim1, dim2, dim3, tcsr);
+                    ulong idx = 0;
+                    for(ulong dim0 = 1; dim0 <= tcsr.dim0; dim0++) {
+                        TIN x = rvt64_read_uram<TIN, 0>(uram, x_base, dim0, dim1, dim2, dim3, tcsr);
+                        if(cmp(x, acc)) { // cmp ? x : acc
+                            acc = x;
+                            idx = dim0;
+                        }
+                    }
+                    if(need_idx) rvt64_write_uram<uint32_t, 1>(uram, i_base, 0, dim1, dim2, dim3, tcsr, (uint32_t)idx);
+                    rvt64_write_uram<TOUT, 2>(uram, y_base, 0, dim1, dim2, dim3, tcsr, acc);
                 }
             }
         }

@@ -38,7 +38,7 @@ namespace RVTNG {
             MFENCE();
             // Decode
             uint8_t group = (inst.inst >> 12) & 0x7;
-            uint8_t extension = (inst.inst >> 25) & 0x7f;
+            uint8_t extension = (inst.inst >> 25) & 0xf;
             uint8_t data_type = (inst.inst >> 32) & 0xff;
             uint8_t operation = (inst.inst >> 40) & 0x3f;
             uint8_t Bd = (inst.inst >> 46) & 0x1;
@@ -98,19 +98,19 @@ namespace RVTNG {
                                     case TX_ELEM_ADD:
                                         rvt64_handle_binary_operation<int32_t, int32_t>(
                                             [](auto a, auto b) -> int32_t { return a + b; },
-                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group], sizeof(uint32_t)
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case TX_ELEM_SUB:
                                         rvt64_handle_binary_operation<int32_t, int32_t>(
                                             [](auto a, auto b) -> int32_t { return a - b; },
-                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group], sizeof(uint32_t)
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case TX_ELEM_MUL:
                                         rvt64_handle_binary_operation<int32_t, int32_t>(
                                             [](auto a, auto b) -> int32_t { return a * b; },
-                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group], sizeof(uint32_t)
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;   
                                     default: 
@@ -122,19 +122,19 @@ namespace RVTNG {
                                     case TX_ELEM_ADD:
                                         rvt64_handle_binary_operation<float, float>(
                                             [](auto a, auto b) -> float { return a + b; },
-                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group], sizeof(float)
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case TX_ELEM_SUB:
                                         rvt64_handle_binary_operation<float, float>(
                                             [](auto a, auto b) -> float { return a - b; },
-                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group], sizeof(float)
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case TX_ELEM_MUL:
                                         rvt64_handle_binary_operation<float, float>(
                                             [](auto a, auto b) -> float { return a * b; },
-                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group], sizeof(float)
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;                          
                                     default:
@@ -154,34 +154,34 @@ namespace RVTNG {
                                         // TODO: Support Round Mode
                                         rvt64_handle_unary_operation<float, int32_t>(
                                             [](auto x) -> int32_t { return static_cast<int32_t>(x); },
-                                            uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(int32_t)
+                                            uram, inst.rs1, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case RVT_TYPE_BF16: // BF16
                                         rvt64_handle_unary_operation<float, uint16_t>(
                                             FP32ToBF16,
-                                            uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), 2
+                                            uram, inst.rs1, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case RVT_TYPE_FP16: // FP16
                                         rvt64_handle_unary_operation<float, uint16_t>(
                                             FP32ToFP16,
-                                            uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), 2
+                                            uram, inst.rs1, inst.rd, tcsr[group]
                                         );
                                         break;
                                     case RVT_TYPE_MX_FP8_E4M3: // FP8E4M3
                                         rvt64_handle_unary_operation<float, uint8_t>(
                                             FP32ToFP8<4>,
-                                            uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), 1
+                                            uram, inst.rs1, inst.rd, tcsr[group]
                                         );
                                         break;
                                     default:
-                                        debugf("RVT64: Unsupport tx.convert rs1type==%d, rs3type==%d!\n", rs1type, rs3type);
+                                        debugf("RVT64: Unsupport tx.convert src_type==%d, dst_type==%d!\n", src_type, dst_type);
                                         break;
                                 }
                                 break;
                             default:
-                                debugf("RVT64: Unsupport tx.convert rs1type==%d!\n", rs1type);
+                                debugf("RVT64: Unsupport tx.convert src_type==%d!\n", src_type);
                                 break;
                         }
                         break;
@@ -190,103 +190,103 @@ namespace RVTNG {
                             case TX_SFU_LOG2: // tx.sfu.log2
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return log2f(x); },
-                                        uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
+                                        uram, inst.rs1, inst.rd, tcsr[group]
                                     );
                                 break;
                             case TX_SFU_EXP2: // tx.sfu.exp2
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return exp2f(x); },
-                                        uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
+                                        uram, inst.rs1, inst.rd, tcsr[group]
                                     );
                                 break;
                             case TX_SFU_SIN: // tx.sfu.sin
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return sinf(x); },
-                                        uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
+                                        uram, inst.rs1, inst.rd, tcsr[group]
                                     );
                                 break;
                             case TX_SFU_COS: // tx.sfu.cos
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return cosf(x); },
-                                        uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
+                                        uram, inst.rs1, inst.rd, tcsr[group]
                                     );
                                 break;
                             case TX_SFU_RSQRT: // tx.sfu.rsqrt
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return 1.0f / sqrtf(x); },
-                                        uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
+                                        uram, inst.rs1, inst.rd, tcsr[group]
                                     );
                                 break;
                             case TX_SFU_RECIP: // tx.sfu.recip
                                 rvt64_handle_unary_operation<float, float>(
                                         [](auto x) -> float { return  1.0f / x; },
-                                        uram, inst.rs1, inst.rd, tcsr[group], sizeof(float), sizeof(float)
+                                        uram, inst.rs1, inst.rd, tcsr[group]
                                     );
                                 break;
                             default:
-                                debugf("RVT64: Unsupport tx.sfu subop==%d!\n", subop);
+                                debugf("RVT64: Unsupport tx.sfu op==%d!\n", operation);
                                 break;
                         }
                         break;
                     case RVT_MACRO_EXT_REDUCE:
                         switch(data_type){
-                            case 0b10001100: // tx.int.reduce
+                            case RVT_TYPE_S32: // S32
                                 switch (operation) {
-                                    case 0: // tx.int.reduce.max
-                                        rvt64_handle_reduce_operation<int32_t, int32_t>(
-                                            [](auto a, auto b) -> int32_t { return std::max(a, b); }, 0xffffffff,
-                                            uram, inst.rs1, inst.rd, tcsr[group], 4
+                                    case TX_ELEM_MAX: // tx.int.reduce.max
+                                        rvt64_handle_reduce_index_operation<int32_t, int32_t>(
+                                            [](auto a, auto b) -> bool { return a > b; },
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
-                                    case 1: // tx.int.reduce.min
-                                        rvt64_handle_reduce_operation<int32_t, int32_t>(
-                                            [](auto a, auto b) -> int32_t { return std::min(a, b); }, 0x7fffffff,
-                                            uram, inst.rs1, inst.rd, tcsr[group], 4
+                                    case TX_ELEM_MIN: // tx.int.reduce.min
+                                        rvt64_handle_reduce_index_operation<int32_t, int32_t>(
+                                            [](auto a, auto b) -> bool { return a < b; },
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
-                                    case 2: // tx.int.reduce.sum
+                                    case TX_ELEM_ADD: // tx.int.reduce.sum
                                         rvt64_handle_reduce_operation<int32_t, int32_t>(
-                                            [](auto a, auto b) -> int32_t { return a + b; }, 0,
-                                            uram, inst.rs1, inst.rd, tcsr[group], 4
+                                            [](auto a, auto b) -> int32_t { return a + b; },
+                                            uram, inst.rs1, inst.rd, tcsr[group]
                                         );
                                         break;
                                     default:
-                                        debugf("RVT64: Unsupport tx.int.reduce subop==%d!\n", subop);
+                                        debugf("RVT64: Unsupport tx.int.reduce op==%d!\n", operation);
                                         break;
                                 }
                                 break;
-                            case 0b10001101: // tx.fp.reduce
+                            case RVT_TYPE_FP32: // FP32
                                 switch (operation) {
-                                    case 0: // tx.fp.reduce.max
-                                        rvt64_handle_reduce_operation<float, float>(
-                                            [](auto a, auto b) -> float { return std::max(a, b); }, std::numeric_limits<float>::lowest(),
-                                            uram, inst.rs1, inst.rd, tcsr[group], 4
+                                    case TX_ELEM_MAX: // tx.fp.reduce.max
+                                        rvt64_handle_reduce_index_operation<float, float>(
+                                            [](auto a, auto b) -> bool { return a > b; },
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
-                                    case 1: // tx.fp.reduce.min
-                                        rvt64_handle_reduce_operation<float, float>(
-                                            [](auto a, auto b) -> float { return std::min(a, b); }, std::numeric_limits<float>::max(),
-                                            uram, inst.rs1, inst.rd, tcsr[group], 4
+                                    case TX_ELEM_MIN: // tx.fp.reduce.min
+                                        rvt64_handle_reduce_index_operation<float, float>(
+                                            [](auto a, auto b) -> bool { return a < b; },
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;
-                                    case 2: // tx.fp.reduce.sum
+                                    case TX_ELEM_ADD: // tx.fp.reduce.sum
                                         rvt64_handle_reduce_operation<float, float>(
-                                            [](auto a, auto b) -> float { return a + b; }, 0.f,
-                                            uram, inst.rs1, inst.rd, tcsr[group], 4
+                                            [](auto a, auto b) -> float { return a + b; },
+                                            uram, inst.rs1, inst.rd, tcsr[group]
                                         );
                                         break;
                                     default:
-                                        debugf("RVT64: Unsupport tx.fp.reduce subop==%d!\n", subop);
+                                        debugf("RVT64: Unsupport tx.fp.reduce op==%d!\n", operation);
                                         break;
                                 }
                                 break;
                             default:
-                                debugf("RVT64: Unsupport Instruction %lx!\n",inst.inst);
+                                debugf("RVT64: Unsupport Reduce Type %x!\n", data_type);
                                 break;  
                         }
                         break;
                     default:
-                        debugf("RVT64: Unsupport Instruction %lx!\n",inst.inst);
+                        debugf("RVT64: Unsupport Instruction %lx with extension %x!\n", inst.inst, extension);
                         break;
                 }
                 continue;
