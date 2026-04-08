@@ -95,6 +95,7 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     ulong vec_t::issue(const rvt_pack_t* inst) {
+        (void)(inst);
         return 0;
     }
     void vec_t::execute(void) {
