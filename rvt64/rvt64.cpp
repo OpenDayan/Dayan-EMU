@@ -137,6 +137,18 @@ namespace RVTNG {
                                             uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
                                         );
                                         break;                          
+                                    case TX_ELEM_MAX:
+                                        rvt64_handle_binary_operation<float, float>(
+                                            [](auto a, auto b) -> float { return a > b ? a : b; },
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
+                                        );
+                                        break;
+                                    case TX_ELEM_MIN:
+                                        rvt64_handle_binary_operation<float, float>(
+                                            [](auto a, auto b) -> float { return a < b ? a : b; },
+                                            uram, Bd, inst.rs1, inst.rs2, inst.rd, tcsr[group]
+                                        );
+                                        break;
                                     default:
                                         assert(0);
                                 }
