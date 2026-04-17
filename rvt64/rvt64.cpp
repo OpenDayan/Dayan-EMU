@@ -41,7 +41,7 @@ namespace RVTNG {
             uint8_t extension = (inst.inst >> 25) & 0xf;
             uint8_t data_type = (inst.inst >> 32) & 0xff;
             uint8_t operation = (inst.inst >> 40) & 0x3f;
-            uint8_t Bd = (inst.inst >> 46) & 0x1;
+            uint8_t Bd = (inst.inst >> 46) & 0x3;
 
             uint8_t src_type = (inst.inst >> 32) & 0xff;
             uint8_t dst_type = (inst.inst >> 40) & 0xff; 

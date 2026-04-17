@@ -53,6 +53,12 @@ namespace RVTNG {
         return  *(T*)rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr);
     }
 
+    static inline float long_bits_to_float(long bits) {
+        float f;
+        memcpy(&f, &bits, sizeof(f));
+        return f;
+    }
+
     template<typename TIN, typename TOUT, typename FUNC>
     static inline void rvt64_handle_binary_operation(
         FUNC func,
@@ -62,11 +68,9 @@ namespace RVTNG {
             for(ulong dim2 = 0; dim2 <= tcsr.dim2; dim2++) {
                 for(ulong dim1 = 0; dim1 <= tcsr.dim1; dim1++) {
                     for(ulong dim0 = 0; dim0 <= tcsr.dim0; dim0++) {
-                        TIN a = rvt64_read_uram<TIN, 0>(uram, a_base, 
-                            broadcast ? 0 : dim0, 
-                            dim1,
-                            dim2,
-                            dim3, tcsr);
+                        TIN a = broadcast == 0b10 ? long_bits_to_float(a_base) :
+                                                    rvt64_read_uram<TIN, 0>(uram, a_base, broadcast == 0b01 ? 0 : dim0, dim1, dim2, dim3, tcsr);
+
                         TIN b = rvt64_read_uram<TIN, 1>(uram, b_base, dim0, dim1, dim2, dim3, tcsr);
                         TOUT c = func(a, b);
                         rvt64_write_uram<TOUT, 2>(uram, c_base, dim0, dim1, dim2, dim3, tcsr, c);    
