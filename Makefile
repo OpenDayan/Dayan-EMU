@@ -7,20 +7,36 @@ SUB_DIRS := emu rvt64 main utils
 BUILD_DIR := build
 OUTPUT_DIR := bin
 
+# 构建类型: Release（默认） / Debug
+BUILD_TYPE ?= Release
+
 # 工具链配置
 CROSS_COMPILE ?=
 CC := $(CROSS_COMPILE)gcc
 CXX := $(CROSS_COMPILE)g++
 AR := $(CROSS_COMPILE)ar
 
-# 编译选项
-CFLAGS ?= -std=c11 -Wall -Wextra -O0 -ffast-math -march=native -g -fsanitize=address
-CXXFLAGS ?= -std=c++20 -Wall -Wextra -O0 -ffast-math -march=native -g -fsanitize=address
+# 公共编译选项
+COMMON_CFLAGS := -std=c11 -Wall -Wextra -ffast-math -march=native
+COMMON_CXXFLAGS := -std=c++20 -Wall -Wextra -ffast-math -march=native
+
+# 编译选项（按构建类型区分）
+ifeq ($(BUILD_TYPE),Debug)
+CFLAGS ?= $(COMMON_CFLAGS) -O0 -g -fsanitize=address
+CXXFLAGS ?= $(COMMON_CXXFLAGS) -O0 -g -fsanitize=address
+LDFLAGS ?= -lm -lpthread -fsanitize=address
+else ifeq ($(BUILD_TYPE),Release)
+CFLAGS ?= $(COMMON_CFLAGS) -O2 -DNDEBUG
+CXXFLAGS ?= $(COMMON_CXXFLAGS) -O2 -DNDEBUG
+LDFLAGS ?= -lm -lpthread -flto
+else
+$(error Unknown BUILD_TYPE: $(BUILD_TYPE). Use Debug or Release)
+endif
+
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
-LDFLAGS ?= -lm -lpthread -fsanitize=address -flto
 
 # 导出变量到子 Makefile
-export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE
+export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE BUILD_TYPE
 
 # 目标文件列表（将在构建过程中填充）
 OBJ_FILES :=
@@ -64,6 +80,10 @@ help:
 	@echo "  clean     - Remove object files and temporary files"
 	@echo "  distclean - Remove all generated files"
 	@echo "  help      - Show this help message"
+	@echo ""
+	@echo "Build type (BUILD_TYPE):"
+	@echo "  make                    - Release build (default, optimized)"
+	@echo "  make BUILD_TYPE=Debug   - Debug build (with debug output)"
 
 # 包含依赖文件（如果存在）
 -include $(OBJ_FILES:.o=.d)

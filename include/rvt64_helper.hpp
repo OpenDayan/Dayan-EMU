@@ -9,6 +9,10 @@
 
 namespace RVTNG {
 
+    static inline bool myisnan(float x) {
+        return ((*(int*)&x) & 0x7fffffff) > 0x7f800000;
+    }
+
     template<typename T, long src>
     static inline void* rvt64_get_uram_ptr(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr) {
         ulong stride0, stride1, stride2, stride3;
@@ -94,6 +98,11 @@ namespace RVTNG {
                     for(ulong dim0 = 0; dim0 <= tcsr.dim0; dim0++) {
                         TIN x = rvt64_read_uram<TIN, 0>(uram, x_base, dim0, dim1, dim2, dim3, tcsr);
                         TOUT y = func(x);
+                        if (std::is_invocable_v<TOUT, float>) {
+                            if(myisnan(y)) {
+                                debugf("[ERROR] RVT64: Encounter NAN in unary operation!\n");
+                            }
+                        }
                         rvt64_write_uram<TOUT, 2>(uram, y_base, dim0, dim1, dim2, dim3, tcsr, y);
                     }
                 }

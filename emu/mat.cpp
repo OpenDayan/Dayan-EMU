@@ -6,6 +6,11 @@
 #include "rvt_decoder.hpp"
 
 namespace RVTNG {
+
+    static inline bool myisnan(float x) {
+        return ((*(int*)&x) & 0x7fffffff) > 0x7f800000;
+    }
+
     mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram):uram(uram) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &mat_t::issue);
@@ -136,16 +141,16 @@ namespace RVTNG {
                     // Fill B
                     fetch_row_bf16(tcsr->bSwizzleMBS, uram, b + n * tcsr->bStride + k * 2, B, leftK);
                     float sum = (acc || k != 0) ? *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) : 0.f;
-                    // if(std::isnan(sum)) {
-                    //     debugf("[ERROR] MAT: Encounter NAN!\n");
-                    // }
+                    if(myisnan(sum)) {
+                        debugf("[ERROR] MAT: Encounter NAN!\n");
+                    }
                     for(ulong subK = 0; subK < 128; subK += 16) {
                         if(subK >= leftK) break;
                         sum = fp32_dot_product<16>(sum, A + subK, B + subK);
                     }
-                    // if(std::isnan(sum) || std::fabs(sum) >= 1e20) {
-                    //     debugf("[ERROR] MAT: Encounter NAN!\n");
-                    // }
+                    if(myisnan(sum) || std::fabs(sum) >= 1e20) {
+                        debugf("[ERROR] MAT: Encounter NAN!\n");
+                    }
                     *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) = sum;
                 }
             }
