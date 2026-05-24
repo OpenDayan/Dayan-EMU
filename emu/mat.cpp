@@ -45,7 +45,7 @@ namespace RVTNG {
                 if(is_mat_tcsr_write) {
                     if((tcsr_id % 32) != 31)
                         _tcsr[tcsr_id] = inst.rd & ((1 << this->tcsr_width[tcsr_id & 0x1f]) - 1);
-                    this->tcsr[tcsr_id / 32].checksum += 1;
+                    // this->tcsr[tcsr_id / 32].checksum += 1;
                     debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
                 } else {
                     rvt_commit_t cmt_pack;
