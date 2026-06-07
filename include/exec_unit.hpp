@@ -11,12 +11,14 @@ namespace RVTNG {
 using commit_call_back_f = std::function<void(const rvt_commit_t*)>;
 using scoreboard_call_back_f = std::function<void(const uint64_t)>;
 using issue_call_back_f = std::function<ulong(const rvt_pack_t*)>;
+using vec_barrier_call_back_f = std::function<void(const rvt_pack_t*)>;
 
 class exec_unit_t {
 private:
     std::vector<commit_call_back_f> commit_cb;
     std::vector<scoreboard_call_back_f> scoreboard_cb;
     std::vector<issue_call_back_f> issue_cb;
+    std::vector<vec_barrier_call_back_f> vec_barrier_cb;
 public:
     void scoreboard(const uint64_t value) {
         for (const auto& cb : scoreboard_cb) {
@@ -25,6 +27,11 @@ public:
     }
     void commit(const rvt_commit_t* inst) {
         for (const auto& cb : commit_cb) {
+            cb(inst);
+        }
+    }
+    void vec_barrier(const rvt_pack_t* inst) {
+        for (const auto& cb : vec_barrier_cb) {
             cb(inst);
         }
     }
@@ -61,6 +68,14 @@ public:
     }
     void register_issue_callback(issue_call_back_f method) {
         issue_cb.emplace_back(method);
+    }
+    // VEC scoreboard barrier arrival callback registration
+    template<typename T>
+    void register_vec_barrier_callback(T* obj, void (T::*method)(const rvt_pack_t*)) {
+        vec_barrier_cb.emplace_back(std::bind(method, obj, std::placeholders::_1));
+    }
+    void register_vec_barrier_callback(vec_barrier_call_back_f method) {
+        vec_barrier_cb.emplace_back(method);
     }
 };
 

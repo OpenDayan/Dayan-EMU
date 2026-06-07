@@ -8,9 +8,13 @@
 #include <cmath>
 
 namespace RVTNG {
+    static constexpr uint32_t TX_VEC_SB_BAR_MASK = 0xfe00707f;
+    static constexpr uint32_t TX_VEC_SB_BAR = 0x0a00500b;
+
     ulong rvt64_t::issue(const rvt_pack_t* inst) {
+        bool is_vec_sb_bar = (inst->inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
         bool is_rvt64 = (inst->inst & 0x7f) == 0x3f;
-        if(!is_rvt64) {
+        if(!(is_rvt64 || is_vec_sb_bar)) {
             return 0;
         }
         this->inst_queue.enqueue(*inst);
@@ -23,6 +27,7 @@ namespace RVTNG {
         parrent->register_issue_callback(this, &rvt64_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);
         this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+        this->register_vec_barrier_callback(parrent, &exec_unit_t::vec_barrier);
     }
 
     ulong rvt64_t::helper_tcsr_xchg(ulong tcsr_id, ulong value, ulong mask) {
@@ -44,6 +49,11 @@ namespace RVTNG {
             // Fence
             MFENCE();
             // Decode
+            if((inst.inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR) {
+                debugf("RVT64: vec scoreboard barrier %lx:\n", (inst.inst >> 7) & 0x1f);
+                vec_barrier(&inst);
+                continue;
+            }
             uint8_t func = inst.inst >> 56;
             uint16_t tcsr_id = (inst.inst >> 32) & 0x3ff;
             uint8_t rd = (inst.inst >> 7) & 0x1f;

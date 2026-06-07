@@ -1,4 +1,6 @@
 #include "core_context.hpp"
+#include <memory>
+#include <unordered_map>
 
 // Constructor: Initialize all core components
 core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram, uint8_t* uram)
@@ -19,6 +21,24 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t*
     top->register_scoreboard_callback([&sb = *scoreboard](const uint64_t entry) {
         sb.enqueue(entry);
     });
+
+    auto vec_barriers = std::make_shared<std::unordered_map<uint64_t, uint8_t>>();
+    auto vec_barrier_mutex = std::make_shared<std::mutex>();
+    top->register_vec_barrier_callback(
+        [top_ptr = top.get(), vec_barriers, vec_barrier_mutex](const rvt_pack_t* inst) {
+            std::lock_guard<std::mutex> lock(*vec_barrier_mutex);
+            uint8_t& arrived = (*vec_barriers)[inst->timestamp];
+            arrived++;
+            if(arrived < 2) {
+                return;
+            }
+            vec_barriers->erase(inst->timestamp);
+            rvt_commit_t cmt_pack;
+            cmt_pack.timestamp = inst->timestamp;
+            cmt_pack.rd = (inst->inst >> 7) & 0x1f;
+            cmt_pack.data = inst->rd;
+            top_ptr->commit(&cmt_pack);
+        });
 
     // Create execution units (each core has its own URAM, but shares DRAM)
     lsu = std::make_unique<RVTNG::lsu_t>(top.get(), uram, dram);
@@ -77,7 +97,8 @@ void core_context_t::fetch_one(int fdInst, std::mutex& fdInstMutex) {
     }
     if(count) {
         ulong v = top->issue(&inst);
-        if(v != 1) {
+        bool is_vec_sb_bar = (inst.inst & 0xfe00707f) == 0x0a00500b;
+        if(v != 1 && !(is_vec_sb_bar && v == 2)) {
             debugf("Core %d: Warning: Inst %lx Issued %ld times.\n", core_id, inst.inst, v);
         }
     }

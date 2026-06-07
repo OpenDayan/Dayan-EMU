@@ -9,6 +9,8 @@ namespace RVTNG {
     #define VV_FLOAT32 0b110000
     #define LOAD (0b010000)
     #define STORE (0b010001)
+    static constexpr uint32_t TX_VEC_SB_BAR_MASK = 0xfe00707f;
+    static constexpr uint32_t TX_VEC_SB_BAR = 0x0a00500b;
     void vv_int32_exec_once(ResQ* resQ, rvt_pack_t inst) {
         enum __TX_VEC_VV_INT32_OP_ENUM {
             TX_INT32_ROL = 0,
@@ -86,6 +88,7 @@ namespace RVTNG {
         parrent->register_issue_callback(this, &vec_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);
         this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+        this->register_vec_barrier_callback(parrent, &exec_unit_t::vec_barrier);
         // 控制状态初始化
         this->mode = OUTER_MODE;
         this->curBlock = 0;
@@ -95,8 +98,9 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     ulong vec_t::issue(const rvt_pack_t* inst) {
+        bool is_vec_sb_bar = (inst->inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
         bool is_vec_tcsr = (inst->inst & 0xf600007f) == (0x02000000 | RVTNG_OPCODE);
-        bool is_vec = is_vec_tcsr | ((inst->inst & 0xe000007f) == (0x80000000 | RVTNG_OPCODE)) | ((inst->inst & 0xe000007f) == (0x40000000 | RVTNG_OPCODE));
+        bool is_vec = is_vec_sb_bar | is_vec_tcsr | ((inst->inst & 0xe000007f) == (0x80000000 | RVTNG_OPCODE)) | ((inst->inst & 0xe000007f) == (0x40000000 | RVTNG_OPCODE));
         if(!is_vec) {
             // ignore
             return 0;
@@ -115,7 +119,7 @@ namespace RVTNG {
             bool is_vec_tcsr_write = (inst.inst & 0xfe004000) == 0x02000000;
             bool is_vec_tcsr_read  = (inst.inst & 0xfe004000) == 0x02004000;
             bool is_vec_sb_produce = (inst.inst & 0xfe004000) == 0x0a000000;
-            bool is_vec_sb_bar     = (inst.inst & 0xfe004000) == 0x0a004000;
+            bool is_vec_sb_bar     = (inst.inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
             if(this->mode == OUTER_MODE) {
                 CSR:
                 if(is_vec_tcsr_read | is_vec_tcsr_write) {
@@ -147,12 +151,8 @@ namespace RVTNG {
                     continue;
                 }
                 if(is_vec_sb_bar) {
-                    rvt_commit_t cmt_pack;
-                    cmt_pack.timestamp = inst.timestamp;
-                    cmt_pack.rd = (inst.inst >> 7) & 0x1f;
-                    cmt_pack.data = inst.rd;
-                    debugf("VEC: scoreboard bar %lx:\n", cmt_pack.rd);
-                    commit(&cmt_pack);
+                    debugf("VEC: scoreboard bar %lx:\n", (inst.inst >> 7) & 0x1f);
+                    vec_barrier(&inst);
                     continue;
                 }
             }
