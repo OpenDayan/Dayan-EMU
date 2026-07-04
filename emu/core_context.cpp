@@ -2,6 +2,12 @@
 #include <memory>
 #include <unordered_map>
 
+namespace
+{
+    static constexpr uint32_t TX_VEC_SB_BAR_MASK = 0xfe00707f;
+    static constexpr uint32_t TX_VEC_SB_BAR = 0x0a00500b;
+}
+
 // Constructor: Initialize all core components
 core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram, uint8_t* uram)
     : core_id(id), uram(uram), running(true) {
@@ -97,7 +103,7 @@ void core_context_t::fetch_one(int fdInst, std::mutex& fdInstMutex) {
     }
     if(count) {
         ulong v = top->issue(&inst);
-        bool is_vec_sb_bar = (inst.inst & 0xfe00707f) == 0x0a00500b;
+        bool is_vec_sb_bar = (inst.inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
         if(v != 1 && !(is_vec_sb_bar && v == 2)) {
             debugf("Core %d: Warning: Inst %lx Issued %ld times.\n", core_id, inst.inst, v);
         }

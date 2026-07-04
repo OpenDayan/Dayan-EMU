@@ -9,6 +9,8 @@ namespace RVTNG {
     #define VV_FLOAT32 0b110000
     #define LOAD (0b010000)
     #define STORE (0b010001)
+    static constexpr uint32_t TX_VEC_SB_MASK = 0xfe004000;
+    static constexpr uint32_t TX_VEC_SB_PRODUCE = 0x0a000000;
     static constexpr uint32_t TX_VEC_SB_BAR_MASK = 0xfe00707f;
     static constexpr uint32_t TX_VEC_SB_BAR = 0x0a00500b;
     void vv_int32_exec_once(ResQ* resQ, rvt_pack_t inst) {
@@ -98,9 +100,13 @@ namespace RVTNG {
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
     ulong vec_t::issue(const rvt_pack_t* inst) {
+        bool is_vec_sb_produce = (inst->inst & TX_VEC_SB_MASK) == TX_VEC_SB_PRODUCE;
         bool is_vec_sb_bar = (inst->inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
         bool is_vec_tcsr = (inst->inst & 0xf600007f) == (0x02000000 | RVTNG_OPCODE);
-        bool is_vec = is_vec_sb_bar | is_vec_tcsr | ((inst->inst & 0xe000007f) == (0x80000000 | RVTNG_OPCODE)) | ((inst->inst & 0xe000007f) == (0x40000000 | RVTNG_OPCODE));
+        bool is_vec =
+            is_vec_sb_produce || is_vec_sb_bar || is_vec_tcsr ||
+            ((inst->inst & 0xe000007f) == (0x80000000 | RVTNG_OPCODE)) ||
+            ((inst->inst & 0xe000007f) == (0x40000000 | RVTNG_OPCODE));
         if(!is_vec) {
             // ignore
             return 0;
@@ -118,8 +124,8 @@ namespace RVTNG {
             // Decode
             bool is_vec_tcsr_write = (inst.inst & 0xfe004000) == 0x02000000;
             bool is_vec_tcsr_read  = (inst.inst & 0xfe004000) == 0x02004000;
-            bool is_vec_sb_produce = (inst.inst & 0xfe004000) == 0x0a000000;
-            bool is_vec_sb_bar     = (inst.inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
+            bool is_vec_sb_produce = (inst.inst & TX_VEC_SB_MASK) == TX_VEC_SB_PRODUCE;
+            bool is_vec_sb_bar = (inst.inst & TX_VEC_SB_BAR_MASK) == TX_VEC_SB_BAR;
             if(this->mode == OUTER_MODE) {
                 CSR:
                 if(is_vec_tcsr_read | is_vec_tcsr_write) {
