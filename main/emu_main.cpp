@@ -6,10 +6,11 @@
 
 
 int main(int argc, char** argv) {
-    int fdMsg, fdInst;
-    // Note: fdMsg and fdInst have race condition issues, create mutexes to avoid related problems
+    int fdMsg, fdInstReq, fdInstRsp;
+    // Note: fdMsg and the instruction request/response pair are shared IPC channels.
+    // Serialize each instruction fetch transaction so request/response ordering stays intact.
     std::mutex fdMsgMutex;  // Protects fdMsg (used by backend_instruction_commit)
-    std::mutex fdInstMutex; // Protects fdInst (used by backend_instruction_fetch)
+    std::mutex fdInstMutex; // Protects fdInstReq/fdInstRsp (used by backend_instruction_fetch)
     // Parse command line arguments to get core count
     int num_cores = 1;
     int qemu_arg_start = 1; // Starting position of QEMU arguments
@@ -150,7 +151,7 @@ int main(int argc, char** argv) {
     }
     
     // Parent process creates server socket
-    backend_init((int*)&fdMsg, (int*)&fdInst);
+    backend_init((int*)&fdMsg, (int*)&fdInstReq, (int*)&fdInstRsp);
     debugf("Main: QEMU Ready!\n");
     
     // Create all cores
@@ -171,7 +172,7 @@ int main(int argc, char** argv) {
     while(1) {
         // Fetch one instruction for each core
         for(auto& core : cores) {
-            core->fetch_one(fdInst, fdInstMutex);
+            core->fetch_one(fdInstReq, fdInstRsp, fdInstMutex);
             }
     }
 }

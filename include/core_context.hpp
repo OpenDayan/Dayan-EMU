@@ -38,8 +38,7 @@ public:
     core_context_t& operator=(const core_context_t&) = delete;
 
     // Fetch one instruction for this core (called from main loop)
-    void fetch_one(int fdInst, std::mutex& fdInstMutex);
+    void fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstMutex);
 };
 
 #endif // CORE_CONTEXT_HPP
-

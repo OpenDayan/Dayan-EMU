@@ -46,66 +46,91 @@ typedef struct {
     uint64_t timestamp;
 } rvt_commit_t;
 
+typedef struct {
+    int fdReq;
+    int fdRsp;
+} rvt_inst_socket_pair_t;
+
+#define RVT_MSG_SOCKET_PATH "/tmp/card0_rvt_msg"
+#define RVT_INST_REQ_SOCKET_PATH "/tmp/card0_rvt_inst_req"
+#define RVT_INST_RSP_SOCKET_PATH "/tmp/card0_rvt_inst_rsp"
+
 // Frontend Service API
 int frontend_dram_read_service(char *buf, size_t size, off_t addr);
 int frontend_dram_write_service(char *buf, size_t size, off_t addr);
 int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg);
 int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg);
 
-static inline void backend_init(int* fdMsg, int* fdInst) {
+static inline void backend_init(int* fdMsg, int* fdInstReq, int* fdInstRsp) {
     int retry = 0;
-    while((*fdMsg = rvt_socket_client_init("/tmp/card0_rvt_msg")) == -1) {
+    while((*fdMsg = rvt_socket_client_init(RVT_MSG_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Backend Init msg client Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInst = rvt_socket_server_init("/tmp/card0_rvt_inst")) == -1) {
+    while((*fdInstReq = rvt_socket_client_init(RVT_INST_REQ_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
-        debugf("Backend Init inst server Fail, retrying %d...\n", ++retry);
+        debugf("Backend Init inst req client Fail, retrying %d...\n", ++retry);
+        usleep(500000);
+    }
+    while((*fdInstRsp = rvt_socket_server_init(RVT_INST_RSP_SOCKET_PATH)) == -1) {
+        if(retry >= 20) {
+            exit(-1);
+        }
+        debugf("Backend Init inst rsp server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
 }
 
-static inline void frontend_init(int* fdMsg, int* fdInst) {
+static inline void frontend_init(int* fdMsg, int* fdInstReq, int* fdInstRsp) {
     int retry = 0;
-    while((*fdMsg = rvt_socket_server_init("/tmp/card0_rvt_msg")) == -1) {
+    while((*fdMsg = rvt_socket_server_init(RVT_MSG_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Frontend Init msg server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInst = rvt_socket_client_init("/tmp/card0_rvt_inst")) == -1) {
+    while((*fdInstReq = rvt_socket_server_init(RVT_INST_REQ_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
-        debugf("Frontend Init inst clint Fail, retrying %d...\n", ++retry);
+        debugf("Frontend Init inst req server Fail, retrying %d...\n", ++retry);
+        usleep(500000);
+    }
+    while((*fdInstRsp = rvt_socket_client_init(RVT_INST_RSP_SOCKET_PATH)) == -1) {
+        if(retry >= 20) {
+            exit(-1);
+        }
+        debugf("Frontend Init inst rsp client Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
 }
 
 static inline void* frontend_serve_inst_loop(void* arg) {
-    int fdInst = (long)arg;
+    rvt_inst_socket_pair_t* sockets = (rvt_inst_socket_pair_t*)arg;
+    int fdInstReq = sockets->fdReq;
+    int fdInstRsp = sockets->fdRsp;
     uint64_t msg;
     while(1) {
         // Waiting status;
-        if (rvt_socket_pop(fdInst, &msg) != 0) {
+        if (rvt_socket_pop(fdInstReq, &msg) != 0) {
             debugf("Fail to get inst req from server.\n");
             exit(1);
         }
         rvt_pack_t instPkg;
         int n = frontend_instruction_fetch_service(msg, &instPkg);
-        rvt_socket_push(fdInst, n);
+        rvt_socket_push(fdInstRsp, n);
         if(n != 0) {
-            rvt_socket_push(fdInst, instPkg.inst);
-            rvt_socket_push(fdInst, instPkg.rd);
-            rvt_socket_push(fdInst, instPkg.rs1);
-            rvt_socket_push(fdInst, instPkg.rs2);
-            rvt_socket_push(fdInst, instPkg.timestamp);
+            rvt_socket_push(fdInstRsp, instPkg.inst);
+            rvt_socket_push(fdInstRsp, instPkg.rd);
+            rvt_socket_push(fdInstRsp, instPkg.rs1);
+            rvt_socket_push(fdInstRsp, instPkg.rs2);
+            rvt_socket_push(fdInstRsp, instPkg.timestamp);
         }
     }
     return NULL;
@@ -261,10 +286,10 @@ static inline int backend_dram_write(int fdMsg, char *buf, size_t size, off_t ad
     }
     return 0;
 }
-static inline int backend_instruction_fetch(int fdInst, int coreIdx, rvt_pack_t* pkg) {
+static inline int backend_instruction_fetch(int fdInstReq, int fdInstRsp, int coreIdx, rvt_pack_t* pkg) {
     uint64_t msg;
-    rvt_socket_push(fdInst, coreIdx);
-    if (rvt_socket_pop(fdInst, &msg) != 0) {
+    rvt_socket_push(fdInstReq, coreIdx);
+    if (rvt_socket_pop(fdInstRsp, &msg) != 0) {
         debugf("Fail to fetch inst response from server.\n");
         exit(1);
     }
@@ -272,11 +297,11 @@ static inline int backend_instruction_fetch(int fdInst, int coreIdx, rvt_pack_t*
         // No Instruction Valid.
         return 0;
     }
-    rvt_socket_pop(fdInst, &(pkg->inst));
-    rvt_socket_pop(fdInst, &(pkg->rd));
-    rvt_socket_pop(fdInst, &(pkg->rs1));
-    rvt_socket_pop(fdInst, &(pkg->rs2));
-    rvt_socket_pop(fdInst, &(pkg->timestamp));
+    rvt_socket_pop(fdInstRsp, &(pkg->inst));
+    rvt_socket_pop(fdInstRsp, &(pkg->rd));
+    rvt_socket_pop(fdInstRsp, &(pkg->rs1));
+    rvt_socket_pop(fdInstRsp, &(pkg->rs2));
+    rvt_socket_pop(fdInstRsp, &(pkg->timestamp));
     return 1;
 }
 static inline int backend_instruction_commit(int fdMsg, int coreIdx, const rvt_commit_t* pkg) {

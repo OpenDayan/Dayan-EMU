@@ -12,6 +12,21 @@ extern "C" {
 #include <stdint.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/time.h>
+
+#ifndef RVT_SOCKET_TYPE
+#define RVT_SOCKET_TYPE SOCK_SEQPACKET
+#endif
+
+static inline void rvt_socket_tune(int sockfd) {
+    const int buf_sz = 1 << 20;
+    const struct timeval timeout = {30, 0};
+
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &buf_sz, sizeof(buf_sz));
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &buf_sz, sizeof(buf_sz));
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
 
 /* 服务器初始化 - 创建监听Unix socket并接受连接 */
 static inline int rvt_socket_server_init(const char* socket_path) {
@@ -19,9 +34,10 @@ static inline int rvt_socket_server_init(const char* socket_path) {
     struct sockaddr_un server_addr;
     
     /* 创建socket */
-    if ((server_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+    if ((server_fd = socket(AF_UNIX, RVT_SOCKET_TYPE, 0)) < 0) {
         return -1;
     }
+    rvt_socket_tune(server_fd);
     
     /* 删除可能已存在的socket文件 */
     unlink(socket_path);
@@ -47,6 +63,7 @@ static inline int rvt_socket_server_init(const char* socket_path) {
         close(server_fd);
         return -1;
     }
+    rvt_socket_tune(client_fd);
     
     close(server_fd);  /* 关闭监听socket，只保留连接socket */
     return client_fd;
@@ -58,9 +75,10 @@ static inline int rvt_socket_client_init(const char* socket_path) {
     struct sockaddr_un server_addr;
     
     /* 创建socket */
-    if ((sockfd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+    if ((sockfd = socket(AF_UNIX, RVT_SOCKET_TYPE, 0)) < 0) {
         return -1;
     }
+    rvt_socket_tune(sockfd);
     
     /* 设置服务器地址 */
     memset(&server_addr, 0, sizeof(server_addr));
@@ -84,7 +102,10 @@ static inline int rvt_socket_push(int sockfd, uint64_t data) {
     /* 阻塞式发送，确保发送完整的8字节 */
     while (total_sent < (ssize_t)sizeof(uint64_t)) {
         sent = send(sockfd, (char*)&data + total_sent, 
-                   sizeof(uint64_t) - total_sent, 0);
+                   sizeof(uint64_t) - total_sent, MSG_NOSIGNAL);
+        if (sent < 0 && errno == EINTR) {
+            continue;
+        }
         if (sent <= 0) {
             return -1;  /* 发送出错 */
         }
@@ -103,6 +124,9 @@ static inline int rvt_socket_pop(int sockfd, uint64_t* data) {
     while (total_received < (ssize_t)sizeof(uint64_t)) {
         received = recv(sockfd, (char*)data + total_received, 
                        sizeof(uint64_t) - total_received, 0);
+        if (received < 0 && errno == EINTR) {
+            continue;
+        }
         if (received <= 0) {
             return -1;  /* 接收出错或连接关闭 */
         }

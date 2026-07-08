@@ -73,12 +73,12 @@ core_context_t::~core_context_t() {
 }
 
 // Fetch one instruction for this core
-void core_context_t::fetch_one(int fdInst, std::mutex& fdInstMutex) {
+void core_context_t::fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstMutex) {
     rvt_pack_t inst;
     int count;
     {
         std::lock_guard<std::mutex> lock(fdInstMutex);
-        count = backend_instruction_fetch(fdInst, core_id, &inst);
+        count = backend_instruction_fetch(fdInstReq, fdInstRsp, core_id, &inst);
     }
     if(count) {
         ulong v = top->issue(&inst);
