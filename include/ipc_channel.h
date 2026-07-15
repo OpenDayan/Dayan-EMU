@@ -20,12 +20,9 @@ extern "C" {
 
 static inline void rvt_socket_tune(int sockfd) {
     const int buf_sz = 1 << 20;
-    const struct timeval timeout = {30, 0};
 
     setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &buf_sz, sizeof(buf_sz));
     setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &buf_sz, sizeof(buf_sz));
-    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 }
 
 /* 服务器初始化 - 创建监听Unix socket并接受连接 */
@@ -96,43 +93,50 @@ static inline int rvt_socket_client_init(const char* socket_path) {
 
 /* 通用的push函数 - 发送uint64_t数据 */
 static inline int rvt_socket_push(int sockfd, uint64_t data) {
-    ssize_t total_sent = 0;
     ssize_t sent;
-    
-    /* 阻塞式发送，确保发送完整的8字节 */
-    while (total_sent < (ssize_t)sizeof(uint64_t)) {
-        sent = send(sockfd, (char*)&data + total_sent, 
-                   sizeof(uint64_t) - total_sent, MSG_NOSIGNAL);
-        if (sent < 0 && errno == EINTR) {
-            continue;
+
+    do {
+        sent = send(sockfd, &data, sizeof(data), MSG_NOSIGNAL);
+    } while (sent < 0 && errno == EINTR);
+
+    if (sent != (ssize_t)sizeof(data)) {
+        if (sent >= 0) {
+            errno = EPROTO;
         }
-        if (sent <= 0) {
-            return -1;  /* 发送出错 */
-        }
-        total_sent += sent;
+        return -1;
     }
-    
+
     return 0;
 }
 
 /* 通用的pop函数 - 接收uint64_t数据 */
 static inline int rvt_socket_pop(int sockfd, uint64_t* data) {
-    ssize_t total_received = 0;
+    uint64_t record;
+    struct iovec iov;
+    struct msghdr message;
     ssize_t received;
-    
-    /* 阻塞式接收，确保接收完整的8字节 */
-    while (total_received < (ssize_t)sizeof(uint64_t)) {
-        received = recv(sockfd, (char*)data + total_received, 
-                       sizeof(uint64_t) - total_received, 0);
-        if (received < 0 && errno == EINTR) {
-            continue;
-        }
-        if (received <= 0) {
-            return -1;  /* 接收出错或连接关闭 */
-        }
-        total_received += received;
+
+    memset(&message, 0, sizeof(message));
+    iov.iov_base = &record;
+    iov.iov_len = sizeof(record);
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+
+    do {
+        message.msg_flags = 0;
+        received = recvmsg(sockfd, &message, 0);
+    } while (received < 0 && errno == EINTR);
+
+    if (received < 0) {
+        return -1;
     }
-    
+    if ((message.msg_flags & MSG_TRUNC) ||
+        received != (ssize_t)sizeof(record)) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    *data = record;
     return 0;
 }
 

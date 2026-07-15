@@ -3,6 +3,9 @@
 #include "core_context.hpp"
 #include <thread>
 #include <optional>
+#include <signal.h>
+#include <sys/prctl.h>
+#include <unistd.h>
 
 
 int main(int argc, char** argv) {
@@ -114,18 +117,29 @@ int main(int argc, char** argv) {
     std::string smp_arg = std::to_string(num_cores);
 
     // Create QEMU child process
+    pid_t parentPid = getpid();
     pid_t qemuPid = fork();
     if (qemuPid == -1) {
         return -1;
     }
     else if (qemuPid == 0) {
+        // QEMU may still be blocked in startup IPC when its parent exits, before
+        // its normal signal handling can drain. Never leave that backend orphaned.
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) == -1) {
+            perror("prctl(PR_SET_PDEATHSIG) failed");
+            _exit(EXIT_FAILURE);
+        }
+        if (getppid() != parentPid) {
+            _exit(EXIT_FAILURE);
+        }
         if(qemu_arg_start >= argc) {// Default debug mode (no QEMU arguments provided)
             // Default mode: automatically add -smp parameter
             execlp("/workspace/npu-qemu/build/dl-riscv64", "QEMU_THREAD", "-monitor", "null",
             "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
             "-machine", "rvtng-v0", "-nographic", "-m", "4096",
             "-smp", smp_arg.c_str(), "-S", "-s", NULL);
-            exit(EXIT_FAILURE);
+            perror("failed to exec default QEMU backend");
+            _exit(EXIT_FAILURE);
         } else {
             // User-defined argument mode: construct argument array with correct -smp value
             std::vector<char*> new_argv;
@@ -146,7 +160,8 @@ int main(int argc, char** argv) {
             new_argv.push_back(smp_str);
             new_argv.push_back(nullptr); // NULL terminator
             execvp(new_argv[0], new_argv.data());
-            exit(EXIT_FAILURE);
+            perror("failed to exec QEMU backend");
+            _exit(EXIT_FAILURE);
         }
     }
     
