@@ -5,156 +5,340 @@
 #include "swizzle.hpp"
 #include "rvt_decoder.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <optional>
+
 namespace RVTNG {
+namespace {
 
-    static inline bool myisnan(float x) {
-        return ((*(int*)&x) & 0x7fffffff) > 0x7f800000;
-    }
+constexpr uint64_t kMatmulBlockK = 128;
+constexpr uint64_t kMXScaleGroupK = 32;
+constexpr uint64_t kUramAddressMask = (uint64_t{1} << 20) - 1;
 
-    mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram):uram(uram) {
-        // TODO：分配资源
-        parrent->register_issue_callback(this, &mat_t::issue);
-        this->register_commit_callback(parrent, &exec_unit_t::commit);
-        this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
-        memset(this->tcsr, 0, sizeof(this->tcsr));
-    }
-    ulong mat_t::issue(const rvt_pack_t* inst) {
-        uint32_t unit = (inst->inst >> 23) & 0x1f;
-        uint32_t tcsr_id = (inst->inst >> 13) & 0x3ff;
-        bool is_mat_tcsr = rvt::is_base(inst->inst) && (unit == RVT_UNIT_MAT || (unit== RVT_UNIT_BASE && tcsr_id == RVT_UNIT_MAT));
-        bool is_mat = rvt::is_mat(inst->inst) | is_mat_tcsr;
-        if(!is_mat) {
-            // ignore
-            return 0;
-        }
-        this->inst_queue.enqueue(*inst);
-        // debugf("MAT: Enqueue MAT Instruction %x!\n",(uint32_t)inst->inst);
-        return 1;
-    }
-    void mat_t::execute(void) {
-        while(1) {
-            // Fetch
-            auto inst = inst_queue.dequeue();
-            // Fence
-            MFENCE();
-            // Decode
-            uint32_t unit = (inst.inst >> 23) & 0x1f;
-            uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
-            bool is_mat_tcsr_write = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT && ((inst.inst >> 12) & 0x1) == 0;
-            bool is_mat_tcsr_read  = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT && ((inst.inst >> 12) & 0x1) == 1;
-            bool is_mat_sb_produce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 0;
-            bool is_mat_sb_bar     = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 1;
-            if(is_mat_tcsr_write | is_mat_tcsr_read) {
-                debugf("MAT: tcsr read write %d:\n", tcsr_id);
-                if(tcsr_id > 8 * 32) {
-                    debugf("* Illgal id.\n");
-                    continue;
-                }
-                uint64_t* _tcsr = (uint64_t*) &this->tcsr;
-                if(is_mat_tcsr_write) {
-                    if((tcsr_id % 32) != 31)
-                        _tcsr[tcsr_id] = inst.rd & ((1 << this->tcsr_width[tcsr_id & 0x1f]) - 1);
-                    // this->tcsr[tcsr_id / 32].checksum += 1;
-                    debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
-                } else {
-                    rvt_commit_t cmt_pack;
-                    cmt_pack.timestamp = inst.timestamp;
-                    cmt_pack.rd = (inst.inst >> 7) & 0x1f;
-                    cmt_pack.data = _tcsr[tcsr_id];
-                    commit(&cmt_pack);
-                    debugf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
-                }
-                continue;
-            }
-            if(is_mat_sb_produce) {
-                debugf("MAT: scoreboard produce %lx:\n", inst.rd);
-                scoreboard(inst.rd);
-                continue;
-            }
-            if(is_mat_sb_bar) {
-                rvt_commit_t cmt_pack;
-                cmt_pack.timestamp = inst.timestamp;
-                cmt_pack.rd = (inst.inst >> 7) & 0x1f;
-                cmt_pack.data = inst.rd;
-                debugf("MAT: scoreboard bar %lx:\n", cmt_pack.rd);
-                commit(&cmt_pack);
-                continue;
-            }
-            // MAT 指令执行
-            {
-                uint64_t group = (inst.inst >> 25) & 0x7;
-                uint64_t a = inst.rs1;
-                uint64_t b = inst.rs2;
-                uint64_t c = inst.rd;
-                if(tcsr[group].dataType == 0) {
-                    debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
-                    execute_mm_bf16_once(tcsr + group, a, b, c, ((inst.inst >> 12) & 0x1));
-                } else {
-                    debugf("MAT: FIXME, add support for type %ld!\n", tcsr[group].dataType);
-                }
-                continue;
-            }
-        }
-    }
+enum class operand_kind_t {
+    tf32,
+    bf16,
+    fp16,
+    fp8_e4m3,
+    fp8_e5m2,
+    fp4_e2m1,
+    sint8,
+    uint8,
+    sint4,
+};
 
-    // TODO: SIMD Optimization this
-    template <ulong len = 128>
-    static inline void fetch_row_bf16(uint64_t swizzleMBS, uint8_t* uram, uint64_t base, float* buf, ulong left) {
-        #pragma GCC ivdep
-        for(ulong subK = 0 ; subK < len; subK += 4) {
-            if(subK < left) {
-                uint64_t v = *(uint64_t*)(uram + swizzle_addr(base + subK * 2, swizzleMBS));
-                buf[subK + 0] = BF16ToFP32((v >>  0) & 0xffff);
-                buf[subK + 1] = BF16ToFP32((v >> 16) & 0xffff);
-                buf[subK + 2] = BF16ToFP32((v >> 32) & 0xffff);
-                buf[subK + 3] = BF16ToFP32((v >> 48) & 0xffff);
-            } else {
-                buf[subK] = 0.f;
-                buf[subK + 1] = 0.f;
-                buf[subK + 2] = 0.f;
-                buf[subK + 3] = 0.f;
-            }
-        }
-    }
+struct mat_format_t {
+    operand_kind_t kind;
+    unsigned bitsPerElement;
+    bool usesScale;
+    const char* name;
+};
 
-    void mat_t::execute_mm_bf16_once(mat_tcsr_t* tcsr, uint64_t a, uint64_t b, uint64_t c, bool acc) {
-        ulong M = tcsr->m + 1;
-        ulong N = tcsr->n + 1;
-        ulong K = tcsr->k + 1;
-        // 注意： K 对齐到 16, N 对齐到 8。
-        if(((K % 16) != 0) || ((N % 8) != 0)) {
-            debugf("MAT: ERROR K, N, K should be aligned to 16; N should be aligned to 8");
-        } else {
-            debugf("MAT: Calculating M%ld N%ld K%ld\n", M, N, K);
-        }
-        // A buffer == float[128]
-        // B buffer == float[128]
-        // 开始切片循环
-        float A[128];
-        float B[128];
-        for(ulong k = 0; k < K; k += 128) {
-            for(ulong m = 0; m < M; m += 1) {
-                ulong leftK = K - k;
-                // Fill A
-                fetch_row_bf16(tcsr->aSwizzleMBS, uram, a + m * tcsr->aStride + k * 2, A, leftK);
-                for(ulong n = 0; n < N; n += 1) {
-                    // Fill B
-                    fetch_row_bf16(tcsr->bSwizzleMBS, uram, b + n * tcsr->bStride + k * 2, B, leftK);
-                    float sum = (acc || k != 0) ? *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) : 0.f;
-                    if(myisnan(sum)) {
-                        debugf("[ERROR] MAT: Encounter NAN!\n");
-                    }
-                    for(ulong subK = 0; subK < 128; subK += 16) {
-                        if(subK >= leftK) break;
-                        sum = fp32_dot_product<16>(sum, A + subK, B + subK);
-                    }
-                    if(myisnan(sum) || std::fabs(sum) >= 1e20) {
-                        debugf("[ERROR] MAT: Encounter NAN!\n");
-                    }
-                    *reinterpret_cast<float *>(uram + swizzle_addr(c + m * tcsr->cStride + n * 4, tcsr->cSwizzleMBS)) = sum;
-                }
-            }
-        }
-        debugf("MAT: 0x%08lx = 0x%08lx @ 0x%08lx\n", c, a, b);
+static std::optional<mat_format_t> decode_mat_format(const mat_tcsr_t& tcsr) {
+    switch (tcsr.dataType) {
+    case RVT_TYPE_FP32:
+        return mat_format_t{operand_kind_t::tf32, 32, false, "TF32"};
+    case RVT_TYPE_BF16:
+        return mat_format_t{operand_kind_t::bf16, 16, false, "BF16"};
+    case RVT_TYPE_FP16:
+        return mat_format_t{operand_kind_t::fp16, 16, false, "FP16"};
+    case RVT_TYPE_FP8_E4M3:
+        return mat_format_t{operand_kind_t::fp8_e4m3, 8, false, "FP8-E4M3"};
+    case RVT_TYPE_FP8_E5M2:
+        return mat_format_t{operand_kind_t::fp8_e5m2, 8, false, "FP8-E5M2"};
+    case RVT_TYPE_MX_FP8_E4M3:
+        return mat_format_t{operand_kind_t::fp8_e4m3, 8, true, "MXFP8-E4M3"};
+    case RVT_TYPE_MX_FP8_E5M2:
+        return mat_format_t{operand_kind_t::fp8_e5m2, 8, true, "MXFP8-E5M2"};
+    case RVT_TYPE_FP4_E2M1:
+        return mat_format_t{operand_kind_t::fp4_e2m1, 4, false, "FP4-E2M1"};
+    case RVT_TYPE_MX_FP4_E2M1:
+        return mat_format_t{operand_kind_t::fp4_e2m1, 4, true, "MXFP4-E2M1"};
+    case RVT_TYPE_RTL_S8:
+    case RVT_TYPE_S8:
+    case RVT_TYPE_COMPAT_S8:
+        return mat_format_t{operand_kind_t::sint8, 8, false, "INT8"};
+    case RVT_TYPE_RTL_U8:
+    case RVT_TYPE_U8:
+    case RVT_TYPE_COMPAT_U8:
+        return mat_format_t{operand_kind_t::uint8, 8, false, "UINT8"};
+    case RVT_TYPE_S4:
+        return mat_format_t{operand_kind_t::sint4, 4, false, "INT4"};
+    default:
+        return std::nullopt;
     }
 }
+
+template<typename T>
+static T load_uram(const uint8_t* uram, uint64_t logicalAddress, uint64_t swizzleMBS) {
+    T value;
+    const uint64_t physicalAddress = swizzle_addr(logicalAddress, swizzleMBS);
+    std::memcpy(&value, uram + physicalAddress, sizeof(value));
+    return value;
+}
+
+template<typename T>
+static void store_uram(uint8_t* uram, uint64_t logicalAddress, uint64_t swizzleMBS,
+                       const T& value) {
+    const uint64_t physicalAddress = swizzle_addr(logicalAddress, swizzleMBS);
+    std::memcpy(uram + physicalAddress, &value, sizeof(value));
+}
+
+static uint64_t element_byte_offset(uint64_t index, unsigned bitsPerElement) {
+    return bitsPerElement == 4 ? index / 2 : index * (bitsPerElement / 8);
+}
+
+static float decode_operand(const uint8_t* uram, uint64_t rowBase, uint64_t index,
+                            uint64_t swizzleMBS, const mat_format_t& format) {
+    const uint64_t address = rowBase + element_byte_offset(index, format.bitsPerElement);
+    switch (format.kind) {
+    case operand_kind_t::tf32:
+        return TF32Clip(load_uram<float>(uram, address, swizzleMBS));
+    case operand_kind_t::bf16:
+        return BF16ToFP32(load_uram<uint16_t>(uram, address, swizzleMBS));
+    case operand_kind_t::fp16:
+        return FP16ToFP32(load_uram<uint16_t>(uram, address, swizzleMBS));
+    case operand_kind_t::fp8_e4m3:
+        return FP8ToFP32<4>(load_uram<uint8_t>(uram, address, swizzleMBS));
+    case operand_kind_t::fp8_e5m2:
+        return FP8ToFP32<5>(load_uram<uint8_t>(uram, address, swizzleMBS));
+    case operand_kind_t::fp4_e2m1: {
+        const uint8_t packed = load_uram<uint8_t>(uram, address, swizzleMBS);
+        const uint8_t value = (index & 1) == 0 ? packed & 0x0fu : packed >> 4;
+        return FP4E2M1ToFP32(value);
+    }
+    case operand_kind_t::sint8: {
+        const int raw = load_uram<uint8_t>(uram, address, swizzleMBS);
+        return static_cast<float>(raw < 0x80 ? raw : raw - 0x100);
+    }
+    case operand_kind_t::uint8:
+        return static_cast<float>(load_uram<uint8_t>(uram, address, swizzleMBS));
+    case operand_kind_t::sint4: {
+        const uint8_t packed = load_uram<uint8_t>(uram, address, swizzleMBS);
+        const int raw = (index & 1) == 0 ? packed & 0x0f : packed >> 4;
+        return static_cast<float>(raw < 8 ? raw : raw - 16);
+    }
+    }
+    return 0.0f;
+}
+
+static void fetch_row(
+    const uint8_t* uram,
+    uint64_t rowBase,
+    uint64_t swizzleMBS,
+    uint64_t firstK,
+    uint64_t count,
+    const mat_format_t& format,
+    uint64_t scaleBase,
+    uint64_t scaleStride,
+    uint64_t majorIndex,
+    std::array<float, kMatmulBlockK>& values,
+    std::array<int, kMatmulBlockK>& scaleExponents) {
+    uint64_t cachedScaleGroup = std::numeric_limits<uint64_t>::max();
+    int cachedScaleExponent = 0;
+    const uint64_t scaleRowBase = scaleBase + majorIndex * scaleStride;
+
+    for (uint64_t subK = 0; subK < kMatmulBlockK; ++subK) {
+        if (subK >= count) {
+            values[subK] = 0.0f;
+            scaleExponents[subK] = 0;
+            continue;
+        }
+
+        const uint64_t logicalK = firstK + subK;
+        values[subK] = decode_operand(uram, rowBase, logicalK, swizzleMBS, format);
+        if (!format.usesScale) {
+            scaleExponents[subK] = 0;
+            continue;
+        }
+
+        const uint64_t scaleGroup = logicalK / kMXScaleGroupK;
+        if (scaleGroup != cachedScaleGroup) {
+            const uint8_t rawScale = load_uram<uint8_t>(uram, scaleRowBase + scaleGroup, 0);
+            cachedScaleExponent = E8M0ToExponent(rawScale);
+            cachedScaleGroup = scaleGroup;
+        }
+        scaleExponents[subK] = cachedScaleExponent;
+    }
+}
+
+static float dot_product(
+    float sum,
+    const std::array<float, kMatmulBlockK>& a,
+    const std::array<float, kMatmulBlockK>& b,
+    const std::array<int, kMatmulBlockK>& aScale,
+    const std::array<int, kMatmulBlockK>& bScale,
+    uint64_t count,
+    bool scaled) {
+    if (!scaled) {
+        #pragma GCC ivdep
+        for (uint64_t i = 0; i < count; ++i) {
+            sum += a[i] * b[i];
+        }
+        return sum;
+    }
+
+    for (uint64_t i = 0; i < count; ++i) {
+        sum += std::ldexp(a[i] * b[i], aScale[i] + bScale[i]);
+    }
+    return sum;
+}
+
+} // namespace
+
+bool execute_matmul(
+    uint8_t* uram,
+    const mat_tcsr_t& tcsr,
+    uint64_t a,
+    uint64_t b,
+    uint64_t c,
+    uint64_t aScale,
+    uint64_t bScale,
+    bool acc) {
+    const auto format = decode_mat_format(tcsr);
+    if (!format.has_value()) {
+        return false;
+    }
+
+    const uint64_t M = tcsr.m + 1;
+    const uint64_t N = tcsr.n + 1;
+    const uint64_t K = tcsr.k + 1;
+    debugf("MAT: Calculating %s M%lu N%lu K%lu\n", format->name, M, N, K);
+
+    std::array<float, kMatmulBlockK> aValues;
+    std::array<float, kMatmulBlockK> bValues;
+    std::array<int, kMatmulBlockK> aScaleExponents;
+    std::array<int, kMatmulBlockK> bScaleExponents;
+
+    for (uint64_t k = 0; k < K; k += kMatmulBlockK) {
+        const uint64_t count = std::min(kMatmulBlockK, K - k);
+        for (uint64_t m = 0; m < M; ++m) {
+            fetch_row(uram, a + m * tcsr.aStride, tcsr.aSwizzleMBS, k, count,
+                      *format, aScale, tcsr.aScaleStride, m,
+                      aValues, aScaleExponents);
+            for (uint64_t n = 0; n < N; ++n) {
+                fetch_row(uram, b + n * tcsr.bStride, tcsr.bSwizzleMBS, k, count,
+                          *format, bScale, tcsr.bScaleStride, n,
+                          bValues, bScaleExponents);
+
+                const uint64_t cAddress = c + m * tcsr.cStride + n * sizeof(float);
+                float sum = (acc || k != 0)
+                    ? load_uram<float>(uram, cAddress, tcsr.cSwizzleMBS)
+                    : 0.0f;
+                if (std::isnan(sum)) {
+                    debugf("[ERROR] MAT: Encountered NaN in C input.\n");
+                }
+                sum = dot_product(sum, aValues, bValues, aScaleExponents,
+                                  bScaleExponents, count, format->usesScale);
+                if (std::isnan(sum) || std::fabs(sum) >= 1e20f) {
+                    debugf("[ERROR] MAT: Encountered NaN or a large result.\n");
+                }
+                store_uram<float>(uram, cAddress, tcsr.cSwizzleMBS, sum);
+            }
+        }
+    }
+    debugf("MAT: 0x%08lx = 0x%08lx @ 0x%08lx\n", c, a, b);
+    return true;
+}
+
+mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram):uram(uram) {
+    parrent->register_issue_callback(this, &mat_t::issue);
+    this->register_commit_callback(parrent, &exec_unit_t::commit);
+    this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+    std::memset(this->tcsr, 0, sizeof(this->tcsr));
+}
+
+ulong mat_t::issue(const rvt_pack_t* inst) {
+    const uint32_t unit = (inst->inst >> 23) & 0x1f;
+    const uint32_t tcsrId = (inst->inst >> 13) & 0x3ff;
+    const bool isMatTcsr = rvt::is_base(inst->inst) &&
+        (unit == RVT_UNIT_MAT || (unit == RVT_UNIT_BASE && tcsrId == RVT_UNIT_MAT));
+    const bool isMat = rvt::is_mat(inst->inst) || isMatTcsr;
+    if (!isMat) {
+        return 0;
+    }
+    this->inst_queue.enqueue(*inst);
+    return 1;
+}
+
+void mat_t::execute(void) {
+    while (1) {
+        const auto inst = inst_queue.dequeue();
+        MFENCE();
+
+        const uint32_t unit = (inst.inst >> 23) & 0x1f;
+        const uint32_t tcsrId = (inst.inst >> 13) & 0x3ff;
+        const bool isMatTcsrWrite = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT &&
+            ((inst.inst >> 12) & 0x1) == 0;
+        const bool isMatTcsrRead = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT &&
+            ((inst.inst >> 12) & 0x1) == 1;
+        const bool isMatSbProduce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
+            ((inst.inst >> 12) & 0x1) == 0;
+        const bool isMatSbBar = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
+            ((inst.inst >> 12) & 0x1) == 1;
+
+        if (isMatTcsrWrite || isMatTcsrRead) {
+            debugf("MAT: tcsr read/write %u:\n", tcsrId);
+            if (tcsrId >= 8 * 32) {
+                debugf("* Illegal id.\n");
+                continue;
+            }
+            uint64_t* rawTcsr = reinterpret_cast<uint64_t*>(&this->tcsr);
+            if (isMatTcsrWrite) {
+                if ((tcsrId % 32) != 31) {
+                    const unsigned width = this->tcsr_width[tcsrId & 0x1f];
+                    rawTcsr[tcsrId] = inst.rd & ((1ull << width) - 1);
+                }
+                debugf("* write %lx -> %lx.\n", inst.rd, rawTcsr[tcsrId]);
+            } else {
+                rvt_commit_t cmtPack;
+                cmtPack.timestamp = inst.timestamp;
+                cmtPack.rd = (inst.inst >> 7) & 0x1f;
+                cmtPack.data = rawTcsr[tcsrId];
+                commit(&cmtPack);
+                debugf("* read %lx -> %lx.\n", rawTcsr[tcsrId], cmtPack.rd);
+            }
+            continue;
+        }
+
+        if (isMatSbProduce) {
+            debugf("MAT: scoreboard produce %lx:\n", inst.rd);
+            scoreboard(inst.rd);
+            continue;
+        }
+        if (isMatSbBar) {
+            rvt_commit_t cmtPack;
+            cmtPack.timestamp = inst.timestamp;
+            cmtPack.rd = (inst.inst >> 7) & 0x1f;
+            cmtPack.data = inst.rd;
+            debugf("MAT: scoreboard bar %lx:\n", cmtPack.rd);
+            commit(&cmtPack);
+            continue;
+        }
+
+        const uint64_t group = RVT_MAT_GROUP(inst.inst);
+        if (IS_RVT_MAT_SETPTR(inst.inst)) {
+            aScaleBase[group] = inst.rs1 & kUramAddressMask;
+            bScaleBase[group] = inst.rs2 & kUramAddressMask;
+            debugf("MAT: setptr group %lu A-scale=0x%lx B-scale=0x%lx\n",
+                   group, aScaleBase[group], bScaleBase[group]);
+            continue;
+        }
+
+        const uint64_t a = inst.rs1 & kUramAddressMask;
+        const uint64_t b = inst.rs2 & kUramAddressMask;
+        const uint64_t c = inst.rd & kUramAddressMask;
+        debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
+        if (!execute_matmul(uram, tcsr[group], a, b, c,
+                            aScaleBase[group], bScaleBase[group],
+                            RVT_MAT_ACC(inst.inst) != 0)) {
+            debugf("MAT: unsupported DataType 0x%02lx.\n", tcsr[group].dataType);
+        }
+    }
+}
+
+} // namespace RVTNG

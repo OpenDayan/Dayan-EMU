@@ -1,6 +1,8 @@
 #pragma once
+#include <cmath>
+#include <cstring>
+#include <limits>
 #include <vector>
-#include <math.h>
 #include <stdint.h>
 
 static inline float GenRandomFloat(float scale) {
@@ -43,7 +45,7 @@ union fp32_int32 {
 static inline uint16_t FP32ToBF16(float a) {
     // FIXME: Use bf16 by default
     uint32_t x = 0;
-    x = *(uint32_t *)&a;
+    std::memcpy(&x, &a, sizeof(x));
     // uint32_t sign = x & 0x80000000;
     int32_t exponent = (x >> 23) & 0xFF;
     // uint32_t mantissa = x & 0x007FFFFF;
@@ -79,6 +81,56 @@ static inline float BF16ToFP32(uint16_t a) {
 
 static inline float BF16Clip(float a) {
     return BF16ToFP32(FP32ToBF16(a));
+}
+
+// TF32 operands are stored in FP32 containers and rounded to a 10-bit
+// fraction before multiplication. Round-to-nearest-even matches the usual
+// TF32 conversion rule and leaves infinities intact. A NaN whose payload
+// lives only in discarded bits remains a NaN after truncation.
+static inline float TF32Clip(float value) {
+    fp32_int32 in;
+    in.f = value;
+    const uint32_t exponent = in.bits & 0x7f800000u;
+    const uint32_t fraction = in.bits & 0x007fffffu;
+
+    if (exponent == 0x7f800000u) {
+        if (fraction != 0) {
+            in.bits = (in.bits & 0xff800000u) | 0x00400000u;
+        }
+        return in.f;
+    }
+
+    const uint32_t rounding_bias = 0x00000fffu + ((in.bits >> 13) & 1u);
+    in.bits = (in.bits + rounding_bias) & 0xffffe000u;
+    return in.f;
+}
+
+static inline float FP16ToFP32(uint16_t value) {
+    const uint32_t sign = static_cast<uint32_t>(value & 0x8000u) << 16;
+    const uint32_t exponent = (value >> 10) & 0x1fu;
+    const uint32_t fraction = value & 0x03ffu;
+    fp32_int32 out = {0};
+
+    if (exponent == 0x1fu) {
+        out.bits = sign | 0x7f800000u | (fraction << 13);
+        if (fraction != 0) {
+            out.bits |= 0x00400000u;
+        }
+        return out.f;
+    }
+
+    if (exponent == 0) {
+        if (fraction == 0) {
+            out.bits = sign;
+            return out.f;
+        }
+        const float magnitude = std::ldexp(static_cast<float>(fraction), -24);
+        return sign == 0 ? magnitude : -magnitude;
+    }
+
+    const float magnitude = std::ldexp(static_cast<float>(0x400u | fraction),
+                                       static_cast<int>(exponent) - 25);
+    return sign == 0 ? magnitude : -magnitude;
 }
 
 static inline uint32_t FP32ToSExp(float a) {
@@ -136,34 +188,39 @@ struct FP8 {
 //     out.f *= exp_f2<127-FP8<E>::E_BIAS>();
 //     return out.f;
 // }
-// TODO: Fixme, Not working in RISCV
-static int isubnorm[8] = {
-            0x00000000,
-            0x3b000000,
-            0x3b800000,
-            0x3bc00000,
-            0x3c000000,
-            0x3c200000,
-            0x3c400000,
-            0x3c600000};
 template<int E>
 inline float FP8ToFP32(uint8_t r) {
-    FP8<E> in;
-    in.bits = r;
-    fp32_int32 out = {0};
-    out.bits = in.bits & 0x80;
-    out.bits <<= 24;
-    if(E == 4) {
-        if((in.bits & 0x7f) < 0x08) {
-            out.bits |= isubnorm[in.bits & 0x7f];
-            return out.f;
-        }
+    static_assert(E == 4 || E == 5, "Only E4M3 and E5M2 FP8 are supported.");
+    constexpr int M = 7 - E;
+    constexpr int bias = (1 << (E - 1)) - 1;
+    constexpr uint8_t fraction_mask = (1u << M) - 1u;
+    constexpr uint8_t exponent_mask = (1u << E) - 1u;
+
+    const int exponent = (r >> M) & exponent_mask;
+    const int fraction = r & fraction_mask;
+    float magnitude = 0.0f;
+    if (exponent == 0) {
+        // Subnormal: (fraction / 2^M) * 2^(1-bias).
+        magnitude = std::ldexp(static_cast<float>(fraction), 1 - bias - M);
+    } else {
+        // NeoMat currently treats every non-zero exponent as a finite value;
+        // this mirrors its internal FP14 operand unpacking for all bit patterns.
+        magnitude = std::ldexp(static_cast<float>((1 << M) | fraction),
+                               exponent - bias - M);
     }
-    uint32_t _bits = in.bits & 0x7F;
-    _bits <<= (23-FP8<E>::M);
-    out.bits |= _bits;
-    out.f *= exp_f2<127-FP8<E>::E_BIAS>();
-    return out.f;
+    return (r & 0x80u) != 0 ? -magnitude : magnitude;
+}
+
+static inline float FP4E2M1ToFP32(uint8_t value) {
+    static constexpr float magnitude[8] = {
+        0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f
+    };
+    const float decoded = magnitude[value & 0x7u];
+    return (value & 0x8u) != 0 ? -decoded : decoded;
+}
+
+static inline int E8M0ToExponent(uint8_t value) {
+    return static_cast<int>(value) - 127;
 }
 // template<int E>
 // inline float fp8Mul(const FP8<E>& a, const FP8<E>& b) {

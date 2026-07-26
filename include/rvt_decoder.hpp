@@ -117,19 +117,20 @@
 // LSU Instructions (Unit = 0001)
 //=============================================================================
 
-// tx.lsu.dma.[u|d]2[u|d]
+// tx.lsu.dma.[u|d]2[u|d][.g|.s|.sg]
 // Fields:
 //   [6:0]   opcode = 0001011
 //   [11:7]  rd (dest ptr)
 //   [12:12] dst (0=URAM, 1=DRAM)
 //   [13:13] src (0=URAM, 1=DRAM)
-//   [14:14] 0
+//   [14:14] scatter table enable
 //   [19:15] rs1 (src ptr)
 //   [22:20] group (3 bits)
-//   [24:23] 0
+//   [23:23] gather table enable
+//   [24:24] 0
 //   [31:25] funct7 = 0000100
 
-#define RVT_LSU_DMA_MASK        0xFF80407FULL
+#define RVT_LSU_DMA_MASK        0xFF00007FULL
 #define RVT_LSU_DMA_PATTERN     0x0800000BULL
 
 #define IS_RVT_LSU_DMA(inst) \
@@ -137,7 +138,9 @@
 
 #define RVT_LSU_DMA_DST(inst)   RVT_BITS(inst, 12, 12)
 #define RVT_LSU_DMA_SRC(inst)   RVT_BITS(inst, 13, 13)
+#define RVT_LSU_DMA_SCATTER(inst) RVT_BITS(inst, 14, 14)
 #define RVT_LSU_DMA_GROUP(inst) RVT_BITS(inst, 22, 20)
+#define RVT_LSU_DMA_GATHER(inst) RVT_BITS(inst, 23, 23)
 #define RVT_LSU_DMA_FUNCT7(inst) RVT_BITS(inst, 31, 25)
 
 // Direction variants
@@ -169,11 +172,12 @@
 //   [28:28] 0
 //   [31:29] funct3 = 001
 
-#define RVT_MAT_MM_MASK         0x9000007FULL
-#define RVT_MAT_MM_PATTERN      0x0000000BULL
+#define RVT_MAT_MM_MASK         0xF000607FULL
+#define RVT_MAT_MM_PATTERN      0x2000000BULL
 
 #define IS_RVT_MAT_MM_FAMILY(inst) \
-    (IS_RVT_32(inst) && RVT32_FUNCT3(inst) == 0b001 && RVT_BITS(inst, 14, 13) == 0b00)
+    (IS_RVT_32(inst) && \
+     RVT_MATCH(inst, RVT_MAT_MM_MASK, RVT_MAT_MM_PATTERN))
 
 #define RVT_MAT_ACC(inst)       RVT_BITS(inst, 12, 12)
 #define RVT_MAT_GROUP(inst)     RVT_BITS(inst, 27, 25)
@@ -186,19 +190,19 @@
 // Fields:
 //   [6:0]   opcode = 0001011
 //   [11:7]  rd = 0
-//   [14:12] 010
+//   [14:12] mode = 100
 //   [19:15] rs1 (A Ext ptr)
 //   [24:20] rs2 (B Ext ptr)
 //   [27:25] group (3 bits)
 //   [28:28] 0
 //   [31:29] funct3 = 001
 
-#define RVT_MAT_SETPTR_MASK     0x90000FFFULL
-#define RVT_MAT_SETPTR_PATTERN  0x0000100BULL
+#define RVT_MAT_SETPTR_MASK     0xF0007FFFULL
+#define RVT_MAT_SETPTR_PATTERN  0x2000400BULL
 
 #define IS_RVT_MAT_SETPTR(inst) \
-    (IS_RVT_32(inst) && RVT_MATCH(inst, 0xF8000FFF, 0x0000100B) && \
-     RVT32_FUNCT3(inst) == 0b001 && RVT32_RD(inst) == 0)
+    (IS_RVT_32(inst) && \
+     RVT_MATCH(inst, RVT_MAT_SETPTR_MASK, RVT_MAT_SETPTR_PATTERN))
 
 //=============================================================================
 // MACRO Instructions (64-bit format)
@@ -261,18 +265,33 @@
 //=============================================================================
 
 #define RVT_TYPE_FP32        0b000000
+#define RVT_TYPE_TF32        RVT_TYPE_FP32
 #define RVT_TYPE_BF16        0b000010
 #define RVT_TYPE_FP16        0b000011
 #define RVT_TYPE_FP8_E4M3    0b000100
 #define RVT_TYPE_FP8_E5M2    0b000101
 #define RVT_TYPE_MX_FP8_E4M3 0b000110
 #define RVT_TYPE_MX_FP8_E5M2 0b000111
+#define RVT_TYPE_FP4_E2M1    0b001000
+#define RVT_TYPE_MX_FP4_E2M1 0b001001
+// Temporary encodings used by the current NeoMat RTL until the ISA table is
+// extended with 4-bit formats and the RTL moves to the architectural S8/U8
+// encodings below.
+#define RVT_TYPE_RTL_S8      0b001010
+#define RVT_TYPE_RTL_U8      0b001011
+#define RVT_TYPE_S4          0b001100
 #define RVT_TYPE_S32         0b010000
 #define RVT_TYPE_U32         0b010001
 #define RVT_TYPE_S16         0b010010
 #define RVT_TYPE_U16         0b010011
 #define RVT_TYPE_S8          0b010100
 #define RVT_TYPE_U8          0b010101
+
+// Deployed kernel headers also use the legacy 0x2x integer namespace. Matrix
+// execution accepts those values as compatibility aliases; new software should
+// use the ISA encodings above (or the temporary RTL values while they remain).
+#define RVT_TYPE_COMPAT_S8   0b100100
+#define RVT_TYPE_COMPAT_U8   0b100101
 
 //=============================================================================
 // Instruction Classification
@@ -281,7 +300,7 @@
 // Check if instruction is from a specific category
 #define IS_RVT_BASE(inst)  (IS_RVT_BASE_TCSR(inst))
 #define IS_RVT_LSU(inst)   (IS_RVT_LSU_DMA(inst))
-#define IS_RVT_MAT(inst)   (IS_RVT_MAT_MM_FAMILY(inst))
+#define IS_RVT_MAT(inst)   (IS_RVT_MAT_MM_FAMILY(inst) || IS_RVT_MAT_SETPTR(inst))
 #define IS_RVT_MACRO(inst) (IS_RVT_64(inst))
 
 // 元素运算操作编码

@@ -1,11 +1,14 @@
 # 根目录 Makefile
-.PHONY: all clean distclean $(SUB_DIRS)
 
 # 项目配置
 PROJECT_NAME := rvt_emulator
 SUB_DIRS := emu rvt64 main utils
 BUILD_DIR := build
 OUTPUT_DIR := bin
+LSU_DMA_TEST := $(BUILD_DIR)/lsu_dma_test
+MAT_TEST := $(BUILD_DIR)/mat_test
+
+.PHONY: all clean distclean help test $(SUB_DIRS)
 
 # 构建类型: Release（默认） / Debug
 BUILD_TYPE ?= Release
@@ -47,6 +50,12 @@ all: $(SUB_DIRS) $(BUILD_DIR) $(OUTPUT_DIR)
 	$(CXX) $(BUILD_DIR)/*.o $(LDFLAGS) -o $(OUTPUT_DIR)/$(PROJECT_NAME)
 	@echo "Build completed: $(OUTPUT_DIR)/$(PROJECT_NAME)"
 
+test: $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp $(LDFLAGS) -o $(LSU_DMA_TEST)
+	$(LSU_DMA_TEST)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp $(LDFLAGS) -o $(MAT_TEST)
+	$(MAT_TEST)
+
 # 创建构建目录
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
@@ -77,6 +86,7 @@ distclean: clean
 help:
 	@echo "Available targets:"
 	@echo "  all       - Build the project (default)"
+	@echo "  test      - Build and run unit tests"
 	@echo "  clean     - Remove object files and temporary files"
 	@echo "  distclean - Remove all generated files"
 	@echo "  help      - Show this help message"

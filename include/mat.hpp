@@ -3,6 +3,7 @@
 
 #include "exec_unit.hpp"
 #include "thread_safe_queue.h"
+#include <cstddef>
 
 namespace RVTNG {
 
@@ -42,6 +43,25 @@ struct mat_tcsr_t {
     uint64_t pad18;                   // index 30: 保留
     uint64_t pad19;                   // index 31: 保留
 };
+static_assert(sizeof(mat_tcsr_t) == 32 * sizeof(uint64_t));
+static_assert(offsetof(mat_tcsr_t, aStride) == 8 * sizeof(uint64_t));
+static_assert(offsetof(mat_tcsr_t, dataType) == 18 * sizeof(uint64_t));
+static_assert(offsetof(mat_tcsr_t, aScaleStride) == 19 * sizeof(uint64_t));
+static_assert(offsetof(mat_tcsr_t, bScaleStride) == 23 * sizeof(uint64_t));
+
+// Execute one architectural tx.mat.mm/tx.mat.mma operation synchronously.
+// A and B follow the MAT layout (A row-major, B column-major); C is always
+// FP32. The scale bases come from the most recent tx.mat.setptr for the group.
+// Returns false when DataType is unsupported.
+bool execute_matmul(
+    uint8_t* uram,
+    const mat_tcsr_t& tcsr,
+    uint64_t a,
+    uint64_t b,
+    uint64_t c,
+    uint64_t aScale,
+    uint64_t bScale,
+    bool acc);
 
 // TCSR 卷积寄存器布局 — 字段顺序对应物理寄存器 index 0-31
 struct conv_tcsr_t {
@@ -86,12 +106,13 @@ public:
     void execute(void);  // 独占循环
 
 protected:
-    // 执行一条 BF16 MAT 指令
-    void execute_mm_bf16_once(mat_tcsr_t* tcsr, uint64_t a, uint64_t b, uint64_t c, bool acc);
     // 私有指令队列
     MPMCQueue<rvt_pack_t, 32> inst_queue;
     // 私有 TCSR
     mat_tcsr_t tcsr[8];
+    // tx.mat.setptr 为每个 TCSR group 保存的 A/B scale 基地址。
+    uint64_t aScaleBase[8] = {};
+    uint64_t bScaleBase[8] = {};
     // TCSR 写入掩码（按 conv_tcsr_t 规范定义，每个 offset 的位宽）
     // c,wi,hi,wo,ho,wk,hk,co, wiStride,hiStride,wkStride,hkStride,coStride,woStride,hoStride,
     // iSwizzleMBS,kSwizzleMBS,oSwizzleMBS, dataType,
