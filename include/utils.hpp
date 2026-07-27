@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdio>
+
 // 调试信息打印，通过 NDEBUG 控制（Release 模式下自动剔除）
 #ifdef NDEBUG
 #define debugf(fmt, ...) do {} while (0)

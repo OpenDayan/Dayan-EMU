@@ -55,6 +55,7 @@ test: $(BUILD_DIR)
 	$(LSU_DMA_TEST)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp $(LDFLAGS) -o $(MAT_TEST)
 	$(MAT_TEST)
+	$(MAKE) -C tests BUILD_DIR=../$(BUILD_DIR)/tests test
 
 # 创建构建目录
 $(BUILD_DIR):

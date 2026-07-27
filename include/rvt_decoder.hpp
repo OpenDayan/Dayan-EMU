@@ -301,6 +301,7 @@
 #define IS_RVT_BASE(inst)  (IS_RVT_BASE_TCSR(inst))
 #define IS_RVT_LSU(inst)   (IS_RVT_LSU_DMA(inst))
 #define IS_RVT_MAT(inst)   (IS_RVT_MAT_MM_FAMILY(inst) || IS_RVT_MAT_SETPTR(inst))
+#define IS_RVT_VEC(inst)   (IS_RVT_32(inst) && !IS_RVT_BASE(inst) && !IS_RVT_LSU(inst) && !IS_RVT_MAT(inst))
 #define IS_RVT_MACRO(inst) (IS_RVT_64(inst))
 
 // 元素运算操作编码
@@ -339,6 +340,7 @@ static inline int rvt_is_rvt64(uint64_t inst) { return IS_RVT_64(inst); }
 static inline int rvt_is_base(uint32_t inst) { return IS_RVT_BASE(inst); }
 static inline int rvt_is_lsu(uint32_t inst) { return IS_RVT_LSU(inst); }
 static inline int rvt_is_mat(uint32_t inst) { return IS_RVT_MAT(inst); }
+static inline int rvt_is_vec(uint32_t inst) { return IS_RVT_VEC(inst); }
 static inline int rvt_is_macro(uint64_t inst) { return IS_RVT_MACRO(inst); }
 
 // Sync/Async checks
@@ -370,6 +372,7 @@ static inline bool is_rvt64(uint64_t inst) { return rvt_is_rvt64(inst) != 0; }
 static inline bool is_base(uint32_t inst) { return rvt_is_base(inst) != 0; }
 static inline bool is_lsu(uint32_t inst) { return rvt_is_lsu(inst) != 0; }
 static inline bool is_mat(uint32_t inst) { return rvt_is_mat(inst) != 0; }
+static inline bool is_vec(uint32_t inst) { return rvt_is_vec(inst) != 0; }
 static inline bool is_macro(uint64_t inst) { return rvt_is_macro(inst) != 0; }
 
 // Sync/Async checks
