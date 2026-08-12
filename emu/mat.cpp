@@ -11,13 +11,14 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <vector>
 
 namespace RVTNG {
 namespace {
 
 constexpr uint64_t kMatmulBlockK = 128;
 constexpr uint64_t kMXScaleGroupK = 32;
-constexpr uint64_t kUramAddressMask = (uint64_t{1} << 20) - 1;
+constexpr uint64_t kUramAddressMask = (uint64_t{1} << 21) - 1;
 
 enum class operand_kind_t {
     tf32,
@@ -38,8 +39,8 @@ struct mat_format_t {
     const char* name;
 };
 
-static std::optional<mat_format_t> decode_mat_format(const mat_tcsr_t& tcsr) {
-    switch (tcsr.dataType) {
+static std::optional<mat_format_t> decode_mat_format(uint64_t dataType) {
+    switch (dataType) {
     case RVT_TYPE_FP32:
         return mat_format_t{operand_kind_t::tf32, 32, false, "TF32"};
     case RVT_TYPE_BF16:
@@ -188,6 +189,59 @@ static float dot_product(
     return sum;
 }
 
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("O3", "fast-math")))
+#endif
+static float dot_product_contiguous(
+    float sum,
+    const float* __restrict__ a,
+    const float* __restrict__ b,
+    uint64_t count) {
+    #pragma GCC ivdep
+    for (uint64_t i = 0; i < count; ++i) {
+        sum += a[i] * b[i];
+    }
+    return sum;
+}
+
+static std::vector<float> decode_conv_input(
+    const uint8_t* uram,
+    const conv_tcsr_t& tcsr,
+    uint64_t input,
+    const mat_format_t& format) {
+    std::vector<float> values(tcsr.hi * tcsr.wi * tcsr.c);
+    for (uint64_t hi = 0; hi < tcsr.hi; ++hi) {
+        for (uint64_t wi = 0; wi < tcsr.wi; ++wi) {
+            const uint64_t source = input + hi * tcsr.hiStride + wi * tcsr.wiStride;
+            float* destination = values.data() + (hi * tcsr.wi + wi) * tcsr.c;
+            for (uint64_t ci = 0; ci < tcsr.c; ++ci) {
+                destination[ci] = decode_operand(uram, source, ci, tcsr.iSwizzleMBS, format);
+            }
+        }
+    }
+    return values;
+}
+
+static std::vector<float> decode_conv_kernel(
+    const uint8_t* uram,
+    const conv_tcsr_t& tcsr,
+    uint64_t kernel,
+    const mat_format_t& format) {
+    std::vector<float> values(tcsr.hk * tcsr.wk * tcsr.co * tcsr.c);
+    for (uint64_t hk = 0; hk < tcsr.hk; ++hk) {
+        for (uint64_t wk = 0; wk < tcsr.wk; ++wk) {
+            for (uint64_t co = 0; co < tcsr.co; ++co) {
+                const uint64_t source = kernel + hk * tcsr.hkStride + wk * tcsr.wkStride + co * tcsr.coStride;
+                float* destination = values.data() + ((hk * tcsr.wk + wk) * tcsr.co + co) * tcsr.c;
+                for (uint64_t ci = 0; ci < tcsr.c; ++ci) {
+                    destination[ci] = decode_operand(uram, source, ci, tcsr.kSwizzleMBS, format);
+                }
+            }
+        }
+    }
+    return values;
+}
+
 } // namespace
 
 bool execute_matmul(
@@ -199,7 +253,7 @@ bool execute_matmul(
     uint64_t aScale,
     uint64_t bScale,
     bool acc) {
-    const auto format = decode_mat_format(tcsr);
+    const auto format = decode_mat_format(tcsr.dataType);
     if (!format.has_value()) {
         return false;
     }
@@ -242,6 +296,54 @@ bool execute_matmul(
         }
     }
     debugf("MAT: 0x%08lx = 0x%08lx @ 0x%08lx\n", c, a, b);
+    return true;
+}
+
+bool execute_conv2d(
+    uint8_t* uram,
+    const conv_tcsr_t& tcsr,
+    uint64_t input,
+    uint64_t kernel,
+    uint64_t output,
+    bool acc) {
+    const auto format = decode_mat_format(tcsr.dataType);
+    if (!format.has_value() || format->usesScale) {
+        return false;
+    }
+
+    debugf("MAT: Calculating %s Conv Hi%lu Wi%lu Ci%lu Hk%lu Wk%lu Ho%lu Wo%lu Co%lu\n",
+           format->name, tcsr.hi, tcsr.wi, tcsr.c, tcsr.hk, tcsr.wk, tcsr.ho, tcsr.wo, tcsr.co);
+    const std::vector<float> inputValues = decode_conv_input(uram, tcsr, input, *format);
+    const std::vector<float> kernelValues = decode_conv_kernel(uram, tcsr, kernel, *format);
+    for (uint64_t ho = 0; ho < tcsr.ho; ++ho) {
+        for (uint64_t wo = 0; wo < tcsr.wo; ++wo) {
+            for (uint64_t co = 0; co < tcsr.co; ++co) {
+                const uint64_t outputAddress = output + ho * tcsr.hoStride + wo * tcsr.woStride + co * sizeof(float);
+                float sum = acc ? load_uram<float>(uram, outputAddress, tcsr.oSwizzleMBS) : 0.0f;
+                for (uint64_t hk = 0; hk < tcsr.hk; ++hk) {
+                    const int64_t hi = static_cast<int64_t>(ho * tcsr.strideH + hk * tcsr.dilationH) -
+                        static_cast<int64_t>(tcsr.padU);
+                    if (hi < 0 || static_cast<uint64_t>(hi) >= tcsr.hi) {
+                        continue;
+                    }
+                    for (uint64_t wk = 0; wk < tcsr.wk; ++wk) {
+                        const int64_t wi = static_cast<int64_t>(wo * tcsr.strideW + wk * tcsr.dilationW) -
+                            static_cast<int64_t>(tcsr.padL);
+                        if (wi < 0 || static_cast<uint64_t>(wi) >= tcsr.wi) {
+                            continue;
+                        }
+                        const float* inputRow = inputValues.data() +
+                            (static_cast<uint64_t>(hi) * tcsr.wi + static_cast<uint64_t>(wi)) * tcsr.c;
+                        const float* kernelRow = kernelValues.data() +
+                            ((hk * tcsr.wk + wk) * tcsr.co + co) * tcsr.c;
+                        sum = dot_product_contiguous(sum, inputRow, kernelRow, tcsr.c);
+                    }
+                }
+                store_uram<float>(uram, outputAddress, tcsr.oSwizzleMBS, sum);
+            }
+        }
+    }
+    debugf("MAT: Conv 0x%08lx = 0x%08lx @ 0x%08lx\n", output, input, kernel);
     return true;
 }
 
@@ -333,6 +435,18 @@ void mat_t::execute(void) {
         const uint64_t b = inst.rs2 & kUramAddressMask;
         const uint64_t c = inst.rd & kUramAddressMask;
         debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
+        if (IS_RVT_MAT_CONV2D(inst.inst) || IS_RVT_MAT_CONV2DA(inst.inst)) {
+            conv_tcsr_t convTcsr;
+            std::memcpy(&convTcsr, &tcsr[group], sizeof(convTcsr));
+            if (!execute_conv2d(uram, convTcsr, a, b, c, IS_RVT_MAT_CONV2DA(inst.inst))) {
+                debugf("MAT: unsupported Conv DataType 0x%02lx.\n", convTcsr.dataType);
+            }
+            continue;
+        }
+        if (!IS_RVT_MAT_MM_FAMILY(inst.inst)) {
+            debugf("MAT: unsupported compute mode 0x%lx.\n", RVT_MAT_MODE(inst.inst));
+            continue;
+        }
         if (!execute_matmul(uram, tcsr[group], a, b, c,
                             aScaleBase[group], bScaleBase[group],
                             RVT_MAT_ACC(inst.inst) != 0)) {

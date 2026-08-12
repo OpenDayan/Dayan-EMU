@@ -12,7 +12,11 @@
 namespace RVTNG {
     namespace {
         constexpr uint64_t kDramBase = 0x80000000ull;
-        constexpr uint64_t kUramSize = 1024ull * 1024ull;
+        constexpr uint64_t kUramSize = 1536ull * 1024ull;
+        constexpr uint64_t kTensorUramBase = 0x00800000ull;
+        constexpr uint64_t kTensorUramStride = 2ull * 1024ull * 1024ull;
+        constexpr uint64_t kUramAddressMask = kTensorUramStride - 1;
+        constexpr uint64_t kTensorUramBytes = 1536ull * 1024ull;
         constexpr uint64_t kLogicalRowBytes = 64;
         constexpr uint64_t kUramPortBytes = 32;
 
@@ -60,6 +64,21 @@ namespace RVTNG {
             std::memcpy(value, uram + offset, sizeof(*value));
             return true;
         }
+    }
+
+    uint8_t* lsu_t::tensor_uram_address(uint64_t addr,
+                                        uint64_t size) const {
+        if(!cluster_urams || addr < kTensorUramBase) {
+            return nullptr;
+        }
+        const uint64_t relative = addr - kTensorUramBase;
+        const uint64_t core = relative / kTensorUramStride;
+        const uint64_t offset = relative % kTensorUramStride;
+        if(core >= cluster_core_count || offset > kTensorUramBytes ||
+           size > kTensorUramBytes - offset) {
+            return nullptr;
+        }
+        return cluster_urams[core] + offset;
     }
 
     void lsu_t::execute_dma(lsu_tcsr_t* tcsr, uint64_t src, uint64_t dst,
@@ -119,7 +138,17 @@ namespace RVTNG {
                                 return false;
                             }
                             if(src_dram) {
-                                std::memcpy(row, dram + addr - kDramBase, kLogicalRowBytes);
+                                if(const uint8_t* tensor =
+                                       tensor_uram_address(addr,
+                                                           kLogicalRowBytes)) {
+                                    std::memcpy(row, tensor, kLogicalRowBytes);
+                                } else if(addr >= kDramBase) {
+                                    std::memcpy(row, dram + addr - kDramBase,
+                                                kLogicalRowBytes);
+                                } else {
+                                    debugf("Fault! Invalid D-side DMA source!\n");
+                                    return false;
+                                }
                             } else {
                                 read_uram_row(row, uram, addr, tcsr->uramReadSwizzleMBS);
                             }
@@ -149,9 +178,17 @@ namespace RVTNG {
                                 return false;
                             }
                             if(dst_dram) {
-                                // std::lock_guard<std::mutex> lock(*fdMsgMutex);
-                                // backend_dram_write(fdMsg, (char*)transfer_buf, write_size, addr);
-                                std::memcpy(dram + addr - kDramBase, transfer_buf, write_size);
+                                if(uint8_t* tensor =
+                                       tensor_uram_address(addr, write_size)) {
+                                    std::memcpy(tensor, transfer_buf,
+                                                write_size);
+                                } else if(addr >= kDramBase) {
+                                    std::memcpy(dram + addr - kDramBase,
+                                                transfer_buf, write_size);
+                                } else {
+                                    debugf("Fault! Invalid D-side DMA destination!\n");
+                                    return false;
+                                }
                             } else {
                                 write_uram_row(uram, addr, tcsr->uramWriteSwizzleMBS,
                                                transfer_buf, write_size);
@@ -165,7 +202,11 @@ namespace RVTNG {
         return true;
     }
 
-    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, uint8_t* dram):uram(uram), dram(dram) {
+    lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, uint8_t* dram,
+                 uint8_t *const *cluster_urams,
+                 size_t cluster_core_count)
+        : uram(uram), dram(dram), cluster_urams(cluster_urams),
+          cluster_core_count(cluster_core_count) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &lsu_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);
@@ -250,8 +291,10 @@ namespace RVTNG {
                 const bool dst_is_dram = RVT_LSU_DMA_DST(inst.inst);
                 const bool gather = RVT_LSU_DMA_GATHER(inst.inst);
                 const bool scatter = RVT_LSU_DMA_SCATTER(inst.inst);
-                const uint64_t src = (src_is_dram && !gather) ? inst.rs1 : (inst.rs1 & 0xfffff);
-                const uint64_t dst = (dst_is_dram && !scatter) ? inst.rd : (inst.rd & 0xfffff);
+                const uint64_t src = (src_is_dram && !gather)
+                    ? inst.rs1 : (inst.rs1 & kUramAddressMask);
+                const uint64_t dst = (dst_is_dram && !scatter)
+                    ? inst.rd : (inst.rd & kUramAddressMask);
                 execute_dma(&this->tcsr[group], src, dst, src_is_dram, dst_is_dram,
                             gather, scatter);
                 std::atomic_thread_fence(std::memory_order_release);

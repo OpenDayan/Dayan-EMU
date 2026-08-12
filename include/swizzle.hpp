@@ -14,6 +14,8 @@
 // }
 
 namespace RVTNG {
+
+    static constexpr uint64_t kSwizzleUramBytes = 1536ull * 1024ull;
     
     template<long maxMask = 8>
     static inline uint64_t swizzle_addr(uint64_t addr, uint64_t swizzleMBS) {
@@ -28,7 +30,7 @@ namespace RVTNG {
         if(addr >= 0x800000) {
             addr -= 0x800000;
         }
-        if(addr >= 1024ul * 1024ul) {
+        if(addr >= kSwizzleUramBytes) {
             debugf("Fault! URAM Overwrite!\n");
             addr = 0;           
         }

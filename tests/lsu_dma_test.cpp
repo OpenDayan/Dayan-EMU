@@ -17,6 +17,9 @@ namespace {
 
 constexpr uint64_t kDramBase = 0x80000000ull;
 constexpr size_t kUramSize = 1024 * 1024;
+constexpr size_t kTensorUramSize = 1536 * 1024;
+constexpr uint64_t kTensorUramBase = 0x00800000ull;
+constexpr uint64_t kTensorUramStride = 2ull * 1024ull * 1024ull;
 constexpr size_t kDramSize = 128 * 1024;
 constexpr size_t kRowBytes = 64;
 
@@ -105,6 +108,35 @@ void test_unaligned_partial_copy(test_lsu_t& lsu, std::vector<uint8_t>& uram,
             assert(result[kRowBytes] == 0xa5);
         }
     }
+}
+
+void test_tail_store_sizes(test_lsu_t& lsu, std::vector<uint8_t>& uram,
+                           std::vector<uint8_t>& dram) {
+    auto control = make_control();
+    control.requestReadSize = 7;
+    control.requestWriteSize = 63;
+
+    const uint64_t src = 0x5003;
+    const uint64_t dst = kDramBase + 0x7007;
+    const auto source = pattern(7);
+    std::copy(source.begin(), source.end(), uram.data() + src);
+    std::fill(dram.data() + dst - kDramBase,
+              dram.data() + dst - kDramBase + kRowBytes, 0xa5);
+
+    assert(lsu.execute_dma_once(&control, src, dst, false, true));
+    const uint8_t* wide_result = dram.data() + dst - kDramBase;
+    assert(std::equal(source.begin(), source.begin() + 8, wide_result));
+    assert(std::all_of(wide_result + 8, wide_result + kRowBytes,
+                       [](uint8_t value) { return value == 0; }));
+
+    control.requestWriteSize = 7;
+    std::fill(dram.data() + dst - kDramBase,
+              dram.data() + dst - kDramBase + kRowBytes, 0xa5);
+    assert(lsu.execute_dma_once(&control, src, dst, false, true));
+    const uint8_t* tail_result = dram.data() + dst - kDramBase;
+    assert(std::equal(source.begin(), source.begin() + 8, tail_result));
+    assert(std::all_of(tail_result + 8, tail_result + kRowBytes,
+                       [](uint8_t value) { return value == 0xa5; }));
 }
 
 void test_gather_scatter_all_directions(test_lsu_t& lsu,
@@ -227,6 +259,46 @@ void test_aligned_transpose(test_lsu_t& lsu, std::vector<uint8_t>& uram,
     assert(!lsu.execute_dma_once(&control, src + 1, dst, true, true));
 }
 
+void test_tensor_uram_windows(std::vector<uint8_t>& dram) {
+    std::array<std::vector<uint8_t>, 4> uram = {
+        std::vector<uint8_t>(kTensorUramSize),
+        std::vector<uint8_t>(kTensorUramSize),
+        std::vector<uint8_t>(kTensorUramSize),
+        std::vector<uint8_t>(kTensorUramSize),
+    };
+    std::array<uint8_t*, 4> windows = {
+        uram[0].data(), uram[1].data(), uram[2].data(), uram[3].data(),
+    };
+    RVTNG::exec_unit_t parent;
+    test_lsu_t lsu(&parent, uram[0].data(), dram.data(), windows.data(),
+                   windows.size());
+    auto control = make_control();
+    const auto source = pattern(41);
+    constexpr uint64_t remote_offset = 0x12340;
+    constexpr uint64_t local_offset = 0x54320;
+    const uint64_t remote_source =
+        kTensorUramBase + 3 * kTensorUramStride + remote_offset;
+
+    std::copy(source.begin(), source.end(),
+              uram[3].data() + remote_offset);
+    assert(lsu.execute_dma_once(&control, remote_source, local_offset,
+                                true, false));
+    assert(std::equal(source.begin(), source.end(),
+                      uram[0].data() + local_offset));
+
+    const uint64_t remote_destination =
+        kTensorUramBase + kTensorUramStride + remote_offset;
+    assert(lsu.execute_dma_once(&control, local_offset, remote_destination,
+                                false, true));
+    assert(std::equal(source.begin(), source.end(),
+                      uram[1].data() + remote_offset));
+
+    const uint64_t unmapped_gap =
+        kTensorUramBase + 2 * kTensorUramStride + kTensorUramSize;
+    assert(!lsu.execute_dma_once(&control, unmapped_gap, local_offset,
+                                 true, false));
+}
+
 } // namespace
 
 int main() {
@@ -237,10 +309,12 @@ int main() {
 
     test_decoder();
     test_unaligned_partial_copy(lsu, uram, dram);
+    test_tail_store_sizes(lsu, uram, dram);
     test_gather_scatter_all_directions(lsu, uram, dram);
     test_unaligned_uram_swizzle(lsu, uram, dram);
     test_block_rows_dominate_padding(lsu, uram, dram);
     test_aligned_transpose(lsu, uram, dram);
+    test_tensor_uram_windows(dram);
     std::cout << "LSU DMA tests passed\n";
     return 0;
 }

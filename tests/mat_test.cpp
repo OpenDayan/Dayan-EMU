@@ -38,9 +38,27 @@ void store(std::vector<uint8_t>& memory, uint64_t address, T value) {
 }
 
 template<typename T>
+void store_swizzled(std::vector<uint8_t>& memory, uint64_t address, uint64_t swizzle, T value) {
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
+    for (size_t index = 0; index < sizeof(value); ++index) {
+        memory[RVTNG::swizzle_addr(address + index, swizzle)] = bytes[index];
+    }
+}
+
+template<typename T>
 T load(const std::vector<uint8_t>& memory, uint64_t address) {
     T value;
     std::memcpy(&value, memory.data() + address, sizeof(value));
+    return value;
+}
+
+template<typename T>
+T load_swizzled(const std::vector<uint8_t>& memory, uint64_t address, uint64_t swizzle) {
+    T value;
+    uint8_t* bytes = reinterpret_cast<uint8_t*>(&value);
+    for (size_t index = 0; index < sizeof(value); ++index) {
+        bytes[index] = memory[RVTNG::swizzle_addr(address + index, swizzle)];
+    }
     return value;
 }
 
@@ -133,6 +151,8 @@ void test_instruction_decoder() {
     constexpr uint32_t mm = 0x2000000bu | (7u << 7) | (3u << 15) |
         (5u << 20) | (6u << 25);
     constexpr uint32_t mma = mm | (1u << 12);
+    constexpr uint32_t conv2d = mm | (2u << 12);
+    constexpr uint32_t conv2da = mm | (3u << 12);
     constexpr uint32_t setptr = 0x2000400bu | (3u << 15) |
         (5u << 20) | (6u << 25);
 
@@ -140,13 +160,160 @@ void test_instruction_decoder() {
     assert(IS_RVT_MAT_MM(mm));
     assert(IS_RVT_MAT_MMA(mma));
     assert(!IS_RVT_MAT_MMA(mm));
+    assert(IS_RVT_MAT_CONV2D(conv2d));
+    assert(IS_RVT_MAT_CONV2DA(conv2da));
+    assert(!IS_RVT_MAT_MM_FAMILY(conv2d));
     assert(!IS_RVT_MAT_MM_FAMILY(mm | (1u << 28)));
     assert(IS_RVT_MAT_SETPTR(setptr));
     assert(!IS_RVT_MAT_MM_FAMILY(setptr));
     assert(!IS_RVT_MAT_SETPTR(setptr | (1u << 7)));
     assert(RVT_MAT_GROUP(setptr) == 6);
     assert(rvt::is_mat(mm));
+    assert(rvt::is_mat(conv2d));
     assert(rvt::is_mat(setptr));
+}
+
+void test_bf16_conv2d() {
+    std::vector<uint8_t> memory(kUramSize, 0);
+    copy_to(memory, kABase, pack_u16({0x3f80, 0x4000}));
+    copy_to(memory, kABase + 32, pack_u16({0x4040, 0x4080}));
+    copy_to(memory, kBBase, pack_u16({0x40a0, 0x40c0}));
+    copy_to(memory, kBBase + 32, pack_u16({0x40e0, 0x4100}));
+
+    RVTNG::conv_tcsr_t control{};
+    control.c = 2;
+    control.wi = 2;
+    control.hi = 1;
+    control.wo = 2;
+    control.ho = 1;
+    control.wk = 1;
+    control.hk = 1;
+    control.co = 2;
+    control.wiStride = 32;
+    control.hiStride = 64;
+    control.wkStride = 32;
+    control.hkStride = 32;
+    control.coStride = 32;
+    control.woStride = 32;
+    control.hoStride = 64;
+    control.dataType = RVT_TYPE_BF16;
+    control.dilationW = 1;
+    control.dilationH = 1;
+    control.strideW = 1;
+    control.strideH = 1;
+
+    assert(RVTNG::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, false));
+    const float expected[2][2] = {{17.0f, 23.0f}, {39.0f, 53.0f}};
+    for (size_t w = 0; w < 2; ++w) {
+        for (size_t co = 0; co < 2; ++co) {
+            expect_close("Conv2D", load<float>(memory, kCBase + w * 32 + co * sizeof(float)), expected[w][co]);
+        }
+    }
+
+    assert(RVTNG::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, true));
+    for (size_t w = 0; w < 2; ++w) {
+        for (size_t co = 0; co < 2; ++co) {
+            expect_close("Conv2DA", load<float>(memory, kCBase + w * 32 + co * sizeof(float)), 2.0f * expected[w][co]);
+        }
+    }
+}
+
+void test_bf16_conv2d_layout() {
+    constexpr uint64_t inputSwizzle = 5 | (1 << 8) | (6 << 16);
+    constexpr uint64_t kernelSwizzle = 6 | (1 << 8) | (7 << 16);
+    constexpr uint64_t outputSwizzle = 5 | (1 << 8) | (8 << 16);
+    constexpr uint64_t hiCount = 3;
+    constexpr uint64_t wiCount = 4;
+    constexpr uint64_t ciCount = 3;
+    constexpr uint64_t hkCount = 2;
+    constexpr uint64_t wkCount = 2;
+    constexpr uint64_t coCount = 2;
+    constexpr uint64_t hoCount = 3;
+    constexpr uint64_t woCount = 3;
+
+    std::vector<uint8_t> memory(kUramSize, 0);
+    std::vector<float> inputValues(hiCount * wiCount * ciCount);
+    std::vector<float> kernelValues(hkCount * wkCount * coCount * ciCount);
+    for (uint64_t hi = 0; hi < hiCount; ++hi) {
+        for (uint64_t wi = 0; wi < wiCount; ++wi) {
+            for (uint64_t ci = 0; ci < ciCount; ++ci) {
+                const size_t index = (hi * wiCount + wi) * ciCount + ci;
+                const uint16_t value = FP32ToBF16(static_cast<float>(1 + index) / 8.0f);
+                inputValues[index] = BF16ToFP32(value);
+                store_swizzled(memory, kABase + hi * 96 + wi * 16 + ci * sizeof(uint16_t), inputSwizzle, value);
+            }
+        }
+    }
+    for (uint64_t hk = 0; hk < hkCount; ++hk) {
+        for (uint64_t wk = 0; wk < wkCount; ++wk) {
+            for (uint64_t co = 0; co < coCount; ++co) {
+                for (uint64_t ci = 0; ci < ciCount; ++ci) {
+                    const size_t index = ((hk * wkCount + wk) * coCount + co) * ciCount + ci;
+                    const uint16_t value = FP32ToBF16(static_cast<float>(1 + index) / 16.0f);
+                    kernelValues[index] = BF16ToFP32(value);
+                    store_swizzled(memory, kBBase + hk * 160 + wk * 64 + co * 16 + ci * sizeof(uint16_t),
+                                   kernelSwizzle, value);
+                }
+            }
+        }
+    }
+
+    RVTNG::conv_tcsr_t control{};
+    control.c = ciCount;
+    control.wi = wiCount;
+    control.hi = hiCount;
+    control.wo = woCount;
+    control.ho = hoCount;
+    control.wk = wkCount;
+    control.hk = hkCount;
+    control.co = coCount;
+    control.wiStride = 16;
+    control.hiStride = 96;
+    control.wkStride = 64;
+    control.hkStride = 160;
+    control.coStride = 16;
+    control.woStride = 32;
+    control.hoStride = 128;
+    control.iSwizzleMBS = inputSwizzle;
+    control.kSwizzleMBS = kernelSwizzle;
+    control.oSwizzleMBS = outputSwizzle;
+    control.dataType = RVT_TYPE_BF16;
+    control.padL = 1;
+    control.padU = 1;
+    control.dilationW = 1;
+    control.dilationH = 1;
+    control.strideW = 2;
+    control.strideH = 1;
+
+    assert(RVTNG::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, false));
+    for (uint64_t ho = 0; ho < hoCount; ++ho) {
+        for (uint64_t wo = 0; wo < woCount; ++wo) {
+            for (uint64_t co = 0; co < coCount; ++co) {
+                float expected = 0.0f;
+                for (uint64_t hk = 0; hk < hkCount; ++hk) {
+                    const int64_t hi = static_cast<int64_t>(ho + hk) - 1;
+                    if (hi < 0 || static_cast<uint64_t>(hi) >= hiCount) {
+                        continue;
+                    }
+                    for (uint64_t wk = 0; wk < wkCount; ++wk) {
+                        const int64_t wi = static_cast<int64_t>(wo * 2 + wk) - 1;
+                        if (wi < 0 || static_cast<uint64_t>(wi) >= wiCount) {
+                            continue;
+                        }
+                        for (uint64_t ci = 0; ci < ciCount; ++ci) {
+                            const size_t inputIndex =
+                                (static_cast<uint64_t>(hi) * wiCount + static_cast<uint64_t>(wi)) * ciCount + ci;
+                            const size_t kernelIndex = ((hk * wkCount + wk) * coCount + co) * ciCount + ci;
+                            expected += inputValues[inputIndex] * kernelValues[kernelIndex];
+                        }
+                    }
+                }
+                const uint64_t address = kCBase + ho * 128 + wo * 32 + co * sizeof(float);
+                const float actual = load_swizzled<float>(memory, address, outputSwizzle);
+                expect_close("Conv2D layout", actual, expected);
+            }
+        }
+    }
 }
 
 void test_scalar_decoders() {
@@ -366,6 +533,8 @@ int main() {
     test_scalar_decoders();
     test_tf32();
     test_bf16_and_fp16();
+    test_bf16_conv2d();
+    test_bf16_conv2d_layout();
     test_fp8();
     test_mxfp8();
     test_int8_encodings();

@@ -1,7 +1,10 @@
 #include "core_context.hpp"
 
 // Constructor: Initialize all core components
-core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram, uint8_t* uram)
+core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
+                               uint8_t* dram, uint8_t* uram,
+                               uint8_t *const *cluster_urams,
+                               size_t cluster_core_count)
     : core_id(id), uram(uram), running(true) {
 
     // Create top-level execution unit
@@ -20,7 +23,9 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t*
     });
 
     // Create execution units (each core has its own URAM, but shares DRAM)
-    lsu = std::make_unique<RVTNG::lsu_t>(top.get(), uram, dram);
+    lsu = std::make_unique<RVTNG::lsu_t>(top.get(), uram, dram,
+                                        cluster_urams,
+                                        cluster_core_count);
     mat = std::make_unique<RVTNG::mat_t>(top.get(), uram);
     vec = std::make_unique<RVTNG::vec_t>(top.get(), uram, 16);
     legacy = std::make_unique<RVTNG::rvt64_t>(top.get(), uram);
@@ -87,4 +92,3 @@ void core_context_t::fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstM
         }
     }
 }
-

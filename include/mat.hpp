@@ -98,6 +98,15 @@ struct conv_tcsr_t {
     uint64_t strideDilationW;         // index 30: 扩张后卷积核水平内存步长
     uint64_t strideDilationH;         // index 31: 扩张后卷积核垂直内存步长
 };
+static_assert(sizeof(conv_tcsr_t) == 32 * sizeof(uint64_t));
+
+bool execute_conv2d(
+    uint8_t* uram,
+    const conv_tcsr_t& tcsr,
+    uint64_t input,
+    uint64_t kernel,
+    uint64_t output,
+    bool acc);
 
 class mat_t: exec_unit_t {
 public:

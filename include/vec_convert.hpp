@@ -1,6 +1,7 @@
 #ifndef RVTNG_VEC_CONVERT_HPP
 #define RVTNG_VEC_CONVERT_HPP
 
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -34,7 +35,7 @@ constexpr bool vec_rounding_mode_supported(uint8_t mode)
 
 constexpr bool vec_convert_op_supported(uint8_t op)
 {
-    return op <= static_cast<uint8_t>(vec_convert_op_t::fp32_to_bf16);
+    return op <= static_cast<uint8_t>(vec_convert_op_t::bf16_to_mxfp8);
 }
 
 namespace vec_convert_detail {
@@ -257,9 +258,118 @@ constexpr uint16_t vec_fp32_to_bf16(uint32_t input, vec_rounding_mode_t mode)
         input, 16, (input >> 31) != 0, mode));
 }
 
+struct vec_mxfp8_block_t {
+    std::array<uint8_t, 32> data{};
+    uint8_t scale = 0;
+};
+
+constexpr void vec_normalize_bf16(uint16_t input, int& exponent,
+                                  uint16_t& significand)
+{
+    const uint16_t raw_exponent = (input >> 7) & 0xff;
+    const uint16_t fraction = input & 0x7f;
+    if(raw_exponent != 0) {
+        exponent = static_cast<int>(raw_exponent) - 127;
+        significand = static_cast<uint16_t>(0x80 | fraction);
+        return;
+    }
+
+    const unsigned leading = 31u - std::countl_zero(
+        static_cast<uint32_t>(fraction));
+    const unsigned shift = 7u - leading;
+    exponent = -126 - static_cast<int>(shift);
+    significand = static_cast<uint16_t>(fraction << shift);
+}
+
+constexpr uint8_t vec_bf16_block_to_e8m0(
+    const std::array<uint16_t, 32>& input)
+{
+    int max_scale = -128;
+    bool any_finite_nonzero = false;
+    for(uint16_t value : input) {
+        const uint16_t exponent = (value >> 7) & 0xff;
+        const uint16_t fraction = value & 0x7f;
+        if(exponent == 0xff || (exponent == 0 && fraction == 0)) {
+            continue;
+        }
+        int normalized_exponent;
+        uint16_t significand;
+        vec_normalize_bf16(value, normalized_exponent, significand);
+        const int candidate = normalized_exponent
+            - (significand > 0xe0 ? 7 : 8);
+        max_scale = max_scale > candidate ? max_scale : candidate;
+        any_finite_nonzero = true;
+    }
+    if(!any_finite_nonzero) {
+        return 127;
+    }
+    const int scale = max_scale < -127 ? -127
+        : (max_scale > 127 ? 127 : max_scale);
+    return static_cast<uint8_t>(scale + 127);
+}
+
+constexpr uint8_t vec_bf16_to_fp8_e4m3(uint16_t input, uint8_t e8m0,
+                                        vec_rounding_mode_t mode)
+{
+    const bool sign = (input >> 15) != 0;
+    const uint8_t sign_bits = sign ? 0x80 : 0;
+    const uint16_t exponent = (input >> 7) & 0xff;
+    const uint16_t fraction = input & 0x7f;
+    if(exponent == 0 && fraction == 0) {
+        return sign_bits;
+    }
+    if(exponent == 0xff) {
+        return static_cast<uint8_t>(sign_bits | (fraction == 0 ? 0x7e : 0x7f));
+    }
+
+    int normalized_exponent;
+    uint16_t significand;
+    vec_normalize_bf16(input, normalized_exponent, significand);
+    int scaled_exponent = normalized_exponent
+        - (static_cast<int>(e8m0) - 127);
+    if(scaled_exponent > 8) {
+        return static_cast<uint8_t>(sign_bits | 0x7e);
+    }
+
+    if(scaled_exponent >= -6) {
+        uint16_t rounded = static_cast<uint16_t>(
+            vec_convert_detail::round_shift_right(significand, 4, sign, mode));
+        if(rounded >= 0x10) {
+            rounded = 0x8;
+            ++scaled_exponent;
+        }
+        const int output_exponent = scaled_exponent + 7;
+        if(output_exponent > 15
+           || (output_exponent == 15 && (rounded & 0x7) == 0x7)) {
+            return static_cast<uint8_t>(sign_bits | 0x7e);
+        }
+        return static_cast<uint8_t>(sign_bits
+            | (static_cast<uint8_t>(output_exponent) << 3)
+            | (rounded & 0x7));
+    }
+
+    const unsigned shift = static_cast<unsigned>(-(scaled_exponent + 2));
+    const uint16_t rounded = static_cast<uint16_t>(
+        vec_convert_detail::round_shift_right(significand, shift, sign, mode));
+    if(rounded >= 8) {
+        return static_cast<uint8_t>(sign_bits | 0x08);
+    }
+    return static_cast<uint8_t>(sign_bits | rounded);
+}
+
+constexpr vec_mxfp8_block_t vec_bf16_to_mxfp8(
+    const std::array<uint16_t, 32>& input, vec_rounding_mode_t mode)
+{
+    vec_mxfp8_block_t output;
+    output.scale = vec_bf16_block_to_e8m0(input);
+    for(size_t i = 0; i < input.size(); ++i) {
+        output.data[i] = vec_bf16_to_fp8_e4m3(input[i], output.scale, mode);
+    }
+    return output;
+}
+
 inline uint32_t execute_vec_convert_lane(uint32_t input, uint8_t op,
-                                         uint8_t rounding_mode,
-                                         size_t lane)
+                                         uint8_t rounding_mode)
 {
     if(!vec_rounding_mode_supported(rounding_mode)) {
         throw std::invalid_argument("unsupported VEC rounding mode");
@@ -275,16 +385,63 @@ inline uint32_t execute_vec_convert_lane(uint32_t input, uint8_t op,
     case vec_convert_op_t::bf16_to_fp32:
         return vec_bf16_to_fp32(static_cast<uint16_t>(input));
     case vec_convert_op_t::fp32_to_fp16:
-        return static_cast<uint32_t>(vec_fp32_to_fp16(input, mode))
-            << (16 * (lane & 1));
+        return vec_fp32_to_fp16(input, mode);
     case vec_convert_op_t::fp32_to_bf16:
-        return static_cast<uint32_t>(vec_fp32_to_bf16(input, mode))
-            << (16 * (lane & 1));
+        return vec_fp32_to_bf16(input, mode);
     case vec_convert_op_t::bf16_to_mxfp8:
     case vec_convert_op_t::bf16_to_nvfp4:
         break;
     }
     throw std::invalid_argument("unsupported VEC convert operation");
+}
+
+template <size_t LaneCount>
+inline std::array<uint32_t, LaneCount> execute_vec_convert(
+    const std::array<uint32_t, LaneCount>& src, uint8_t op,
+    uint8_t rounding_mode)
+{
+    static_assert(LaneCount % 2 == 0);
+    std::array<uint32_t, LaneCount> dst{};
+    if(op == static_cast<uint8_t>(vec_convert_op_t::bf16_to_mxfp8)) {
+        static_assert(LaneCount % 16 == 0);
+        if(!vec_rounding_mode_supported(rounding_mode)) {
+            throw std::invalid_argument("unsupported VEC rounding mode");
+        }
+        for(size_t base = 0; base < LaneCount; base += 16) {
+            std::array<uint16_t, 32> block_input{};
+            for(size_t word = 0; word < 16; ++word) {
+                block_input[2 * word] = static_cast<uint16_t>(src[base + word]);
+                block_input[2 * word + 1] = static_cast<uint16_t>(src[base + word] >> 16);
+            }
+            const auto block = vec_bf16_to_mxfp8(
+                block_input, static_cast<vec_rounding_mode_t>(rounding_mode));
+            for(size_t word = 0; word < 8; ++word) {
+                dst[base + word] = static_cast<uint32_t>(block.data[4 * word])
+                    | (static_cast<uint32_t>(block.data[4 * word + 1]) << 8)
+                    | (static_cast<uint32_t>(block.data[4 * word + 2]) << 16)
+                    | (static_cast<uint32_t>(block.data[4 * word + 3]) << 24);
+            }
+            dst[base + 8] = block.scale;
+        }
+        return dst;
+    }
+    const bool narrow = op == static_cast<uint8_t>(vec_convert_op_t::fp32_to_fp16)
+        || op == static_cast<uint8_t>(vec_convert_op_t::fp32_to_bf16);
+    if(narrow) {
+        for(size_t lane = 0; lane < LaneCount; lane += 2) {
+            const uint32_t low = execute_vec_convert_lane(
+                src[lane], op, rounding_mode);
+            const uint32_t high = execute_vec_convert_lane(
+                src[lane + 1], op, rounding_mode);
+            dst[lane] = low | (high << 16);
+        }
+        return dst;
+    }
+
+    for(size_t lane = 0; lane < LaneCount; lane++) {
+        dst[lane] = execute_vec_convert_lane(src[lane], op, rounding_mode);
+    }
+    return dst;
 }
 
 } // namespace RVTNG

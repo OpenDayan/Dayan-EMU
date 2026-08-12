@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -68,6 +69,35 @@ struct vec_coord_t {
     uint64_t d5 = 0;
 };
 
+inline uint64_t vec_outer_coord_count(const vec_tcsr_t& tcsr)
+{
+    uint64_t total = 1;
+    for(uint64_t dim : {tcsr.dim2, tcsr.dim3, tcsr.dim4, tcsr.dim5}) {
+        const uint64_t extent = dim + 1;
+        if(total > std::numeric_limits<uint64_t>::max() / extent) {
+            return std::numeric_limits<uint64_t>::max();
+        }
+        total *= extent;
+    }
+    return total;
+}
+
+inline vec_coord_t vec_outer_coord(const vec_tcsr_t& tcsr, uint64_t index)
+{
+    vec_coord_t coord;
+    const uint64_t dim2_extent = tcsr.dim2 + 1;
+    const uint64_t dim3_extent = tcsr.dim3 + 1;
+    const uint64_t dim4_extent = tcsr.dim4 + 1;
+    coord.d2 = index % dim2_extent;
+    index /= dim2_extent;
+    coord.d3 = index % dim3_extent;
+    index /= dim3_extent;
+    coord.d4 = index % dim4_extent;
+    index /= dim4_extent;
+    coord.d5 = index;
+    return coord;
+}
+
 struct vec_vfork_req_t {
     uint64_t block_id = 0;
     uint64_t start_slot = 0;
@@ -86,7 +116,9 @@ struct vec_task_req_t {
     uint64_t block_id = 0;
     uint64_t start_slot = 0;
     uint64_t inst_count = 0;
-    vec_coord_t coord;
+    uint64_t outer_begin = 0;
+    uint64_t outer_end = 1;
+    uint64_t outer_stride = 1;
     vec_vfork_control_t control;
     vec_tcsr_t tcsr_snapshot;
 };

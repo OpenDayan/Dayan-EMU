@@ -180,11 +180,22 @@
      RVT_MATCH(inst, RVT_MAT_MM_MASK, RVT_MAT_MM_PATTERN))
 
 #define RVT_MAT_ACC(inst)       RVT_BITS(inst, 12, 12)
+#define RVT_MAT_MODE(inst)      RVT_BITS(inst, 14, 12)
 #define RVT_MAT_GROUP(inst)     RVT_BITS(inst, 27, 25)
 #define RVT_MAT_FUNCT3(inst)    RVT_BITS(inst, 31, 29)
 
 #define IS_RVT_MAT_MM(inst)     (IS_RVT_MAT_MM_FAMILY(inst) && RVT_MAT_ACC(inst) == 0)
 #define IS_RVT_MAT_MMA(inst)    (IS_RVT_MAT_MM_FAMILY(inst) && RVT_MAT_ACC(inst) == 1)
+
+#define RVT_MAT_COMPUTE_MASK    0xF000007FULL
+#define RVT_MAT_COMPUTE_PATTERN 0x2000000BULL
+
+#define IS_RVT_MAT_COMPUTE_FAMILY(inst) \
+    (IS_RVT_32(inst) && \
+     RVT_MATCH(inst, RVT_MAT_COMPUTE_MASK, RVT_MAT_COMPUTE_PATTERN))
+
+#define IS_RVT_MAT_CONV2D(inst)  (IS_RVT_MAT_COMPUTE_FAMILY(inst) && RVT_MAT_MODE(inst) == 2)
+#define IS_RVT_MAT_CONV2DA(inst) (IS_RVT_MAT_COMPUTE_FAMILY(inst) && RVT_MAT_MODE(inst) == 3)
 
 // tx.mat.setptr
 // Fields:
@@ -300,7 +311,7 @@
 // Check if instruction is from a specific category
 #define IS_RVT_BASE(inst)  (IS_RVT_BASE_TCSR(inst))
 #define IS_RVT_LSU(inst)   (IS_RVT_LSU_DMA(inst))
-#define IS_RVT_MAT(inst)   (IS_RVT_MAT_MM_FAMILY(inst) || IS_RVT_MAT_SETPTR(inst))
+#define IS_RVT_MAT(inst)   (IS_RVT_MAT_COMPUTE_FAMILY(inst) || IS_RVT_MAT_SETPTR(inst))
 #define IS_RVT_VEC(inst)   (IS_RVT_32(inst) && !IS_RVT_BASE(inst) && !IS_RVT_LSU(inst) && !IS_RVT_MAT(inst))
 #define IS_RVT_MACRO(inst) (IS_RVT_64(inst))
 

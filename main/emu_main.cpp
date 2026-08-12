@@ -7,6 +7,7 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 
+static constexpr size_t kUramBytesPerCore = 1536 * 1024;
 
 int main(int argc, char** argv) {
     int fdMsg, fdInstReq, fdInstRsp;
@@ -105,7 +106,8 @@ int main(int argc, char** argv) {
         // Create per-core URAM
         char uram_shm_name[64];
         snprintf(uram_shm_name, sizeof(uram_shm_name), "/uram_shm_%d", i);
-        uram[i] = (uint8_t *)backend_get_shm_ptr(uram_shm_name, 1024 * 1024);
+        uram[i] = (uint8_t *)backend_get_shm_ptr(uram_shm_name,
+                                                kUramBytesPerCore);
         if(uram[i] == nullptr) {
             fprintf(stderr, "Error: Failed to create URAM for core %d\n", i);
             throw std::runtime_error("Failed to create URAM");
@@ -174,7 +176,8 @@ int main(int argc, char** argv) {
     for(int i = 0; i < num_cores; i++) {
         try {
             cores.push_back(std::make_unique<core_context_t>(
-                i, fdMsg, fdMsgMutex, dram, uram[i]));
+                i, fdMsg, fdMsgMutex, dram, uram[i], &uram[0],
+                (size_t)num_cores));
         } catch(const std::exception& e) {
             fprintf(stderr, "Error: Failed to create core %d: %s\n", i, e.what());
             return 1;

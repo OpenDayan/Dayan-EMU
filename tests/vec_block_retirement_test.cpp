@@ -19,6 +19,28 @@ bool check(bool condition, const char* message)
 
 int main()
 {
+    RVTNG::vec_tcsr_t outer_tcsr{};
+    outer_tcsr.dim2 = 1;
+    outer_tcsr.dim3 = 2;
+    outer_tcsr.dim4 = 1;
+    outer_tcsr.dim5 = 1;
+    if(!check(RVTNG::vec_outer_coord_count(outer_tcsr) == 24,
+            "outer coordinate count must include dimensions 2 through 5")) {
+        return 1;
+    }
+    std::vector<unsigned> seen(24);
+    for(uint64_t job = 0; job < 4; ++job) {
+        for(uint64_t index = job; index < seen.size(); index += 4) {
+            const RVTNG::vec_coord_t coord = RVTNG::vec_outer_coord(outer_tcsr, index);
+            const uint64_t flattened = coord.d2 + 2 * (coord.d3 + 3 * (coord.d4 + 2 * coord.d5));
+            ++seen[flattened];
+        }
+    }
+    if(!check(seen == std::vector<unsigned>(24, 1),
+            "strided worker jobs must cover every outer coordinate once")) {
+        return 1;
+    }
+
     RVTNG::vec_block_retirement_t blocks;
     RVTNG::vec_scoreboard_fences_t fences;
     std::vector<std::string> callbacks;

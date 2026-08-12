@@ -6,6 +6,7 @@
 #include "vec_convert.hpp"
 #include "vec_mul24.hpp"
 #include "vec_scalar.hpp"
+#include "vec_shuffle.hpp"
 #include "vec_unary.hpp"
 #include <algorithm>
 #include <array>
@@ -23,13 +24,14 @@ constexpr uint64_t VEC_CONTROL_VALID_MASK = (1ull << 41) - 1;
 constexpr uint64_t VEC_URAM_SIZE = 1024ull * 1024ull;
 
 struct vec_lane_t {
-    std::array<uint32_t, 64> u32{};
+    std::array<uint32_t, 64> u32;
 };
 
 struct vec_thread_context_t {
-    std::array<vec_lane_t, 16> vq0{};
-    std::array<vec_lane_t, 16> vq1{};
+    std::array<vec_lane_t, 16> vq0;
+    std::array<vec_lane_t, 16> vq1;
     std::array<uint32_t, 2> head{};
+    std::array<uint16_t, 2> valid{};
     std::array<uint64_t, 8> s{};
     vec_coord_t coord{};
     const vec_tcsr_t* tcsr = nullptr;
@@ -112,6 +114,7 @@ static inline vec_lane_t& write_vec(vec_thread_context_t& ctx, uint8_t bank)
 {
     uint8_t b = bank & 0x1;
     ctx.head[b] = (ctx.head[b] + 1) & 0xf;
+    ctx.valid[b] |= uint16_t{1} << ctx.head[b];
     return b ? ctx.vq1[ctx.head[b]] : ctx.vq0[ctx.head[b]];
 }
 
@@ -120,6 +123,10 @@ static inline const vec_lane_t& read_vec(const vec_thread_context_t& ctx, uint8_
     uint8_t bank = (vrs >> 4) & 0x1;
     uint8_t offset = vrs & 0xf;
     uint8_t idx = (ctx.head[bank] - offset) & 0xf;
+    if((ctx.valid[bank] & (uint16_t{1} << idx)) == 0) {
+        static const vec_lane_t zero{};
+        return zero;
+    }
     return bank ? ctx.vq1[idx] : ctx.vq0[idx];
 }
 
@@ -146,6 +153,26 @@ static inline void write_u32(uint8_t* uram, uint64_t addr, uint32_t value)
     if(addr + sizeof(value) <= VEC_URAM_SIZE) {
         std::memcpy(uram + addr, &value, sizeof(value));
     }
+}
+
+static inline bool read_dense_vec(uint8_t* uram, uint64_t addr, vec_lane_t& value)
+{
+    addr = normalize_uram_addr(addr);
+    if((addr & (sizeof(uint32_t) - 1)) != 0 || addr > VEC_URAM_SIZE - sizeof(value.u32)) {
+        return false;
+    }
+    std::memcpy(value.u32.data(), uram + addr, sizeof(value.u32));
+    return true;
+}
+
+static inline bool write_dense_vec(uint8_t* uram, uint64_t addr, const vec_lane_t& value)
+{
+    addr = normalize_uram_addr(addr);
+    if((addr & (sizeof(uint32_t) - 1)) != 0 || addr > VEC_URAM_SIZE - sizeof(value.u32)) {
+        return false;
+    }
+    std::memcpy(uram + addr, value.u32.data(), sizeof(value.u32));
+    return true;
 }
 
 static inline uint64_t sign_extend(uint64_t value, uint8_t bits)
@@ -214,6 +241,9 @@ static void execute_vec_regular_load(vec_thread_context_t& ctx, const vec_inst_t
         dst.u32.fill(read_linear(ctx, sparse, addr));
         return;
     }
+    if(!sparse && read_dense_vec(ctx.uram, addr, dst)) {
+        return;
+    }
     for(size_t lane = 0; lane < dst.u32.size(); lane++) {
         dst.u32[lane] = read_linear(ctx, sparse, addr + lane * sizeof(uint32_t));
     }
@@ -261,6 +291,9 @@ static void execute_vec_regular_store(vec_thread_context_t& ctx, const vec_inst_
 
     if(scalar_source) {
         write_linear(ctx, sparse, addr, static_cast<uint32_t>(ctx.s[vrs1 & 0x7]));
+        return;
+    }
+    if(!sparse && write_dense_vec(ctx.uram, addr, src)) {
         return;
     }
     for(size_t lane = 0; lane < src.u32.size(); lane++) {
@@ -363,7 +396,8 @@ static void execute_vec_sparse_dyn(vec_thread_context_t& ctx, const vec_inst_t& 
 enum class shuffle_op_t {
     xor_lane,
     ror_lane,
-    broadcast_lane
+    broadcast_lane,
+    compress_lane
 };
 
 enum class v_shift_op_t {
@@ -398,18 +432,23 @@ static void execute_vec_shuffle(vec_thread_context_t& ctx, const vec_inst_t& ins
 {
     uint64_t param = Dynamic ? ctx.s[f.s1] : inst.rd;
     const vec_lane_t& src = read_vec(ctx, f.vrs1);
-    vec_lane_t& dst = write_vec(ctx, f.vb);
 
-    for(size_t lane = 0; lane < dst.u32.size(); lane++) {
-        size_t idx;
-        if constexpr(Op == shuffle_op_t::xor_lane) {
-            idx = (lane ^ param) & 0x3f;
-        } else if constexpr(Op == shuffle_op_t::ror_lane) {
-            idx = (lane + param) & 0x3f;
-        } else {
-            idx = param & 0x3f;
+    if constexpr(Op == shuffle_op_t::compress_lane) {
+        const auto result = execute_vec_shuffle_compress(src.u32, param);
+        write_vec(ctx, f.vb).u32 = result;
+    } else {
+        vec_lane_t& dst = write_vec(ctx, f.vb);
+        for(size_t lane = 0; lane < dst.u32.size(); lane++) {
+            size_t idx;
+            if constexpr(Op == shuffle_op_t::xor_lane) {
+                idx = (lane ^ param) & 0x3f;
+            } else if constexpr(Op == shuffle_op_t::ror_lane) {
+                idx = (lane + param) & 0x3f;
+            } else {
+                idx = param & 0x3f;
+            }
+            dst.u32[lane] = src.u32[idx];
         }
-        dst.u32[lane] = src.u32[idx];
     }
 }
 
@@ -443,11 +482,8 @@ static void execute_vec_v_sfu(vec_thread_context_t& ctx, const vec_fields_t& f)
 static void execute_vec_v_convert(vec_thread_context_t& ctx, const vec_fields_t& f)
 {
     const vec_lane_t& src = read_vec(ctx, f.vrs1_low);
-    vec_lane_t& dst = write_vec(ctx, f.vb);
-    for(size_t lane = 0; lane < dst.u32.size(); lane++) {
-        dst.u32[lane] = execute_vec_convert_lane(
-            src.u32[lane], f.unary.op, f.unary.rounding_mode, lane);
-    }
+    write_vec(ctx, f.vb).u32 = execute_vec_convert(
+        src.u32, f.unary.op, f.unary.rounding_mode);
 }
 
 static bool cmp_predicate(uint8_t pred, int relation)
@@ -670,6 +706,12 @@ static void execute_one_vec_inst(vec_thread_context_t& ctx, const vec_inst_t& in
         case 0b101:
             execute_vec_shuffle<shuffle_op_t::broadcast_lane, true>(ctx, inst, f);
             return;
+        case 0b110:
+            execute_vec_shuffle<shuffle_op_t::compress_lane, false>(ctx, inst, f);
+            return;
+        case 0b111:
+            execute_vec_shuffle<shuffle_op_t::compress_lane, true>(ctx, inst, f);
+            return;
         default:
             debugf("VEC: unsupported shuffle subfunc 0x%x\n", f.subfunc3);
             return;
@@ -845,21 +887,39 @@ static uint64_t execute_mode2(vec_thread_context_t& ctx,
     return ctx.executed_insts;
 }
 
+static uint64_t execute_vec_coord(const vec_task_req_t& task,
+                                  const vec_coord_t& coord,
+                                  const vec_inst_t* inst_queue,
+                                  uint8_t* uram,
+                                  vec_sparse_memory_t* sparse_memory,
+                                  size_t lane_count)
+{
+    (void)lane_count;
+    vec_thread_context_t ctx;
+    ctx.coord = coord;
+    ctx.tcsr = &task.tcsr_snapshot;
+    ctx.uram = uram;
+    ctx.sparse_memory = sparse_memory;
+
+    return task.control.dynamic ? execute_mode2(ctx, task, inst_queue)
+                                : execute_mode1(ctx, task, inst_queue);
+}
+
 static vec_task_resp_t execute_vec_task(const vec_task_req_t& task,
                                         const vec_inst_t* inst_queue,
                                         uint8_t* uram,
                                         vec_sparse_memory_t* sparse_memory,
                                         size_t lane_count)
 {
-    (void)lane_count;
-    vec_thread_context_t ctx;
-    ctx.coord = task.coord;
-    ctx.tcsr = &task.tcsr_snapshot;
-    ctx.uram = uram;
-    ctx.sparse_memory = sparse_memory;
-
-    uint64_t executed = task.control.dynamic ? execute_mode2(ctx, task, inst_queue)
-                                             : execute_mode1(ctx, task, inst_queue);
+    uint64_t executed = 0;
+    for(uint64_t outer = task.outer_begin; outer < task.outer_end;) {
+        executed += execute_vec_coord(task, vec_outer_coord(task.tcsr_snapshot, outer),
+                                      inst_queue, uram, sparse_memory, lane_count);
+        if(task.outer_stride >= task.outer_end - outer) {
+            break;
+        }
+        outer += task.outer_stride;
+    }
     return vec_task_resp_t{task.block_id, executed};
 }
 
@@ -951,30 +1011,23 @@ void vec_executer_t::stop()
 
 void vec_executer_t::dispatch_block(active_block_t& block)
 {
-    uint64_t total = 0;
-    for(uint64_t d5 = 0; d5 <= block.req.tcsr_snapshot.dim5; d5++) {
-        for(uint64_t d4 = 0; d4 <= block.req.tcsr_snapshot.dim4; d4++) {
-            for(uint64_t d3 = 0; d3 <= block.req.tcsr_snapshot.dim3; d3++) {
-                for(uint64_t d2 = 0; d2 <= block.req.tcsr_snapshot.dim2; d2++) {
-                    vec_task_req_t task;
-                    task.block_id = block.req.block_id;
-                    task.start_slot = block.req.start_slot;
-                    task.inst_count = block.req.inst_count;
-                    task.coord.d2 = d2;
-                    task.coord.d3 = d3;
-                    task.coord.d4 = d4;
-                    task.coord.d5 = d5;
-                    task.control = block.req.control;
-                    task.tcsr_snapshot = block.req.tcsr_snapshot;
-                    task_req_queue.enqueue(std::move(task));
-                    total++;
-                }
-            }
-        }
+    const uint64_t outer_count = vec_outer_coord_count(block.req.tcsr_snapshot);
+    const uint64_t job_count = std::min<uint64_t>(outer_count, thread_count);
+    for(uint64_t job = 0; job < job_count; job++) {
+        vec_task_req_t task;
+        task.block_id = block.req.block_id;
+        task.start_slot = block.req.start_slot;
+        task.inst_count = block.req.inst_count;
+        task.outer_begin = job;
+        task.outer_end = outer_count;
+        task.outer_stride = job_count;
+        task.control = block.req.control;
+        task.tcsr_snapshot = block.req.tcsr_snapshot;
+        task_req_queue.enqueue(std::move(task));
     }
-    block.total_tasks = total;
+    block.total_tasks = job_count;
     block.dispatched = true;
-    if(total == 0) {
+    if(job_count == 0) {
         block.done = true;
     }
 }

@@ -1,4 +1,5 @@
 #include "vec_convert.hpp"
+#include "vec_shuffle.hpp"
 #include "vec_unary.hpp"
 
 #include <array>
@@ -202,46 +203,124 @@ bool check_bf16_fp32()
     return true;
 }
 
-bool check_lane_semantics_and_unsupported()
+bool check_bf16_mxfp8()
 {
-    if(!check(execute_vec_convert_lane(0x00003c00, 2, 0, 7)
-                  == 0x3f800000,
-              "fp16 source uses low 16 bits")
-       || !check(execute_vec_convert_lane(0x00003f80, 3, 0, 7)
-                     == 0x3f800000,
-                 "bf16 source uses low 16 bits")
-       || !check(execute_vec_convert_lane(0x3f800000, 4, 0, 0)
-                     == 0x00003c00,
-                 "even fp16 destination lane placement")
-       || !check(execute_vec_convert_lane(0x3f800000, 4, 0, 1)
-                     == 0x3c000000,
-                 "odd fp16 destination lane placement")
-       || !check(execute_vec_convert_lane(0x3f800000, 5, 0, 1)
-                     == 0x3f800000,
-                 "odd bf16 destination lane placement")) {
+    std::array<uint16_t, 32> ones{};
+    ones.fill(0x3f80);
+    const auto rne = vec_bf16_to_mxfp8(ones, vec_rounding_mode_t::rne);
+    if(!check(rne.scale == 0x77, "MXFP8 one block scale")) {
+        return false;
+    }
+    for(uint8_t value : rne.data) {
+        if(!check(value == 0x78, "MXFP8 one block payload")) {
+            return false;
+        }
+    }
+
+    std::array<uint16_t, 32> special{};
+    special[0] = 0x43e0;
+    special[1] = 0xc3e0;
+    special[2] = 0x3f80;
+    special[3] = 0x7f80;
+    special[4] = 0x7fc1;
+    const auto converted = vec_bf16_to_mxfp8(
+        special, vec_rounding_mode_t::rne);
+    if(!check(converted.scale == 0x7f, "MXFP8 finite maximum scale")
+       || !check(converted.data[0] == 0x7e, "MXFP8 positive maximum")
+       || !check(converted.data[1] == 0xfe, "MXFP8 negative maximum")
+       || !check(converted.data[2] == 0x38, "MXFP8 one with unit scale")
+       || !check(converted.data[3] == 0x7e, "MXFP8 infinity saturation")
+       || !check(converted.data[4] == 0x7f, "MXFP8 NaN encoding")) {
         return false;
     }
 
+    std::array<uint16_t, 32> tie{};
+    tie.fill(0x3f88);
+    const auto tie_rne = vec_bf16_to_mxfp8(tie, vec_rounding_mode_t::rne);
+    const auto tie_rmm = vec_bf16_to_mxfp8(tie, vec_rounding_mode_t::rmm);
+    if(!check(tie_rne.data[0] == 0x78, "MXFP8 RNE tie-to-even")
+       || !check(tie_rmm.data[0] == 0x79, "MXFP8 RMM tie-away")) {
+        return false;
+    }
+
+    std::array<uint32_t, 64> src{};
+    for(size_t subcore = 0; subcore < 4; ++subcore) {
+        const uint16_t value = static_cast<uint16_t>(0x3f80 + subcore * 0x80);
+        for(size_t word = 0; word < 16; ++word) {
+            src[subcore * 16 + word] = value | (static_cast<uint32_t>(value) << 16);
+        }
+    }
+    const auto dst = execute_vec_convert(src, 6, 0);
+    return check(dst[8] == 0x77, "MXFP8 subcore 0 scale")
+        && check(dst[24] == 0x78, "MXFP8 subcore 1 scale")
+        && check(dst[40] == 0x79, "MXFP8 subcore 2 scale")
+        && check(dst[56] == 0x7a, "MXFP8 subcore 3 scale")
+        && check(dst[0] == 0x78787878, "MXFP8 subcore 0 payload placement")
+        && check(dst[16] == 0x78787878, "MXFP8 subcore 1 payload placement")
+        && check(dst[32] == 0x78787878, "MXFP8 subcore 2 payload placement")
+        && check(dst[48] == 0x78787878, "MXFP8 subcore 3 payload placement");
+}
+
+bool check_lane_semantics_and_unsupported()
+{
+    if(!check(execute_vec_convert_lane(0x00003c00, 2, 0)
+                  == 0x3f800000,
+              "fp16 source uses low 16 bits")
+       || !check(execute_vec_convert_lane(0x00003f80, 3, 0)
+                     == 0x3f800000,
+                 "bf16 source uses low 16 bits")
+       || !check(execute_vec_convert_lane(0x3f800000, 4, 0)
+                     == 0x00003c00,
+                 "fp16 narrowing result uses low half")
+       || !check(execute_vec_convert_lane(0x3f800000, 5, 0)
+                     == 0x00003f80,
+                 "bf16 narrowing result uses low half")) {
+        return false;
+    }
+
+    std::array<uint32_t, 64> src{};
+    for(size_t lane = 0; lane < src.size(); lane++) {
+        src[lane] = 0x3f800000u + static_cast<uint32_t>(lane << 16);
+    }
+    for(uint8_t op : {uint8_t{4}, uint8_t{5}}) {
+        const auto dst = execute_vec_convert(src, op, 0);
+        for(size_t lane = 0; lane < src.size(); lane += 2) {
+            const uint32_t low = execute_vec_convert_lane(src[lane], op, 0);
+            const uint32_t high = execute_vec_convert_lane(src[lane + 1], op, 0);
+            if(!check(dst[lane] == (low | (high << 16)),
+                      "adjacent narrowing results share even lane")) {
+                return false;
+            }
+        }
+        const auto compact = execute_vec_shuffle_compress(dst, 1);
+        for(size_t lane = 0; lane < compact.size() / 2; lane++) {
+            if(!check(compact[lane] == dst[2 * lane],
+                      "compress preserves packed narrowing order")) {
+                return false;
+            }
+        }
+    }
+
     bool reserved_rm_rejected = false;
-    bool mxfp8_rejected = false;
+    bool mxfp8_lane_rejected = false;
     bool nvfp4_rejected = false;
     try {
-        (void)execute_vec_convert_lane(0, 0, 5, 0);
+        (void)execute_vec_convert_lane(0, 0, 5);
     } catch(const std::invalid_argument&) {
         reserved_rm_rejected = true;
     }
     try {
-        (void)execute_vec_convert_lane(0, 6, 0, 0);
+        (void)execute_vec_convert_lane(0, 6, 0);
     } catch(const std::invalid_argument&) {
-        mxfp8_rejected = true;
+        mxfp8_lane_rejected = true;
     }
     try {
-        (void)execute_vec_convert_lane(0, 7, 0, 0);
+        (void)execute_vec_convert_lane(0, 7, 0);
     } catch(const std::invalid_argument&) {
         nvfp4_rejected = true;
     }
     return check(reserved_rm_rejected, "reserved rm must be rejected")
-        && check(mxfp8_rejected, "MXFP8 must remain explicitly unsupported")
+        && check(mxfp8_lane_rejected, "MXFP8 has no single-lane operation")
         && check(nvfp4_rejected, "NVFP4 must remain explicitly unsupported");
 }
 
@@ -251,7 +330,7 @@ int main()
 {
     if(!check_decode() || !check_s32_fp32() || !check_fp32_s32()
        || !check_fp16_fp32() || !check_fp32_fp16() || !check_bf16_fp32()
-       || !check_lane_semantics_and_unsupported()) {
+       || !check_bf16_mxfp8() || !check_lane_semantics_and_unsupported()) {
         return 1;
     }
     std::cout << "vec_convert_test passed\n";

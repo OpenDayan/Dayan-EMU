@@ -44,11 +44,14 @@ static_assert(offsetof(lsu_tcsr_t, tableStride) == 20 * sizeof(uint64_t));
 class lsu_t: exec_unit_t {
 public:
     ulong issue(const rvt_pack_t* inst) override;
-    lsu_t(exec_unit_t* parrent, uint8_t *uram, uint8_t *dram);
+    lsu_t(exec_unit_t* parrent, uint8_t *uram, uint8_t *dram,
+          uint8_t *const *cluster_urams = nullptr,
+          size_t cluster_core_count = 0);
     ~lsu_t();
     void execute(void);  // 独占循环
 
 protected:
+    uint8_t* tensor_uram_address(uint64_t addr, uint64_t size) const;
     // 执行一条 DMA 指令，包括批量任务与地址表展开。
     void execute_dma(lsu_tcsr_t* tcsr, uint64_t src, uint64_t dst,
                      bool src_dram, bool dst_dram, bool gather, bool scatter);
@@ -70,6 +73,9 @@ protected:
     uint8_t* uram;
     // dram
     uint8_t* dram;
+    // URAM windows exposed on the tensor/D-side address range.
+    uint8_t *const *cluster_urams;
+    size_t cluster_core_count;
 };
 
 }
