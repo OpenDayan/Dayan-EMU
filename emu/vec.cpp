@@ -208,22 +208,24 @@ static inline void write_linear(const vec_thread_context_t& ctx, bool sparse, ui
 static void execute_vec_regular_load(vec_thread_context_t& ctx, const vec_inst_t& inst, uint32_t raw)
 {
     uint8_t vb = (raw >> 25) & 0x1;
-    uint8_t sd = (raw >> 25) & 0x7;
+    uint8_t sd = (raw >> 23) & 0x7;
     uint8_t subfunc = (raw >> 12) & 0x7;
     uint8_t sel = (raw >> 15) & 0x3;
     uint8_t s1 = (raw >> 7) & 0x7;
     uint64_t addr = inst.rd + vec_iter_value(vec_select_iter(*ctx.tcsr, true, sel), ctx.coord);
-    bool to_scalar = subfunc == 0x6 || subfunc == 0x7;
+    bool global_to_scalar = ((raw >> 18) & 0x1f) == 0 && ((raw >> 17) & 0x1) != 0 && ((raw >> 12) & 0x1f) == 0;
+    bool to_scalar = subfunc == 0x6 || subfunc == 0x7 || global_to_scalar;
     bool sparse = subfunc == 0x1 || subfunc == 0x3 || subfunc == 0x7;
     bool from_scalar = subfunc == 0x4;
     bool from_gpr = subfunc == 0x5;
     bool broadcast = subfunc == 0x2 || subfunc == 0x3 || from_scalar || from_gpr;
 
     if(to_scalar) {
-        if(from_gpr) {
+        if(global_to_scalar) {
             ctx.s[sd] = inst.rd;
         } else {
-            ctx.s[sd] = read_linear(ctx, sparse, addr);
+            ctx.s[sd] = static_cast<uint64_t>(read_linear(ctx, sparse, addr))
+                | (static_cast<uint64_t>(read_linear(ctx, sparse, addr + sizeof(uint32_t))) << 32);
         }
         return;
     }

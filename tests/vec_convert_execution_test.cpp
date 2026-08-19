@@ -1,5 +1,7 @@
 #include "vec.hpp"
+#include "vec_convert.hpp"
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -11,14 +13,42 @@ constexpr uint32_t CUSTOM_32_OPCODE = 0x0b;
 constexpr uint64_t INPUT_ADDR = 0x1000;
 constexpr uint64_t OUTPUT_ADDR = 0x2000;
 
-constexpr uint32_t regular_load_raw()
+constexpr uint32_t regular_load_raw(uint8_t subfunc = 0)
 {
-    return (0b010000u << 26) | CUSTOM_32_OPCODE;
+    return (0b010000u << 26)
+        | (static_cast<uint32_t>(subfunc & 7) << 12)
+        | CUSTOM_32_OPCODE;
 }
 
 constexpr uint32_t regular_store_raw()
 {
     return (0b010001u << 26) | CUSTOM_32_OPCODE;
+}
+
+constexpr uint32_t masked_store_raw(uint8_t scalar)
+{
+    return (0b010001u << 26) | (1u << 22)
+        | (static_cast<uint32_t>(scalar & 7) << 12)
+        | CUSTOM_32_OPCODE;
+}
+
+constexpr uint32_t shuffle_raw(uint8_t subfunc)
+{
+    return (0b011111u << 26)
+        | (static_cast<uint32_t>(subfunc & 7) << 12)
+        | CUSTOM_32_OPCODE;
+}
+
+constexpr uint32_t scalar_true_raw()
+{
+    return (0b111110u << 26) | (1u << 17) | (3u << 15)
+        | (3u << 10) | CUSTOM_32_OPCODE;
+}
+
+constexpr uint32_t scalar_add_raw()
+{
+    return (0b111110u << 26) | (1u << 15) | (1u << 12)
+        | CUSTOM_32_OPCODE;
 }
 
 constexpr uint32_t convert_raw(uint8_t op, uint8_t rm)
@@ -34,6 +64,69 @@ bool check(bool condition, const char* message)
         std::cerr << "vec_convert_execution_test failed: " << message << '\n';
     }
     return condition;
+}
+
+bool run_fp32_lowp_compress(uint8_t op)
+{
+    using namespace RVTNG;
+
+    std::vector<uint8_t> uram(1024 * 1024);
+    std::array<uint32_t, 64> input{};
+    for(size_t lane = 0; lane < input.size(); lane++) {
+        const float value = static_cast<float>(static_cast<int>(lane) - 31) / 13.0f;
+        input[lane] = std::bit_cast<uint32_t>(value);
+    }
+    std::memcpy(uram.data() + INPUT_ADDR, input.data(), sizeof(input));
+    std::array<uint32_t, 64> initial_output;
+    initial_output.fill(0xdeadbeefu);
+    std::memcpy(uram.data() + OUTPUT_ADDR, initial_output.data(), sizeof(initial_output));
+
+    std::array<vec_inst_t, VEC_INST_QUEUE_CAPACITY> inst_queue{};
+    size_t pc = 0;
+    inst_queue[pc++] = vec_inst_t{scalar_true_raw()};
+    inst_queue[pc++] = vec_inst_t{scalar_add_raw()};
+    inst_queue[pc++] = vec_inst_t{regular_load_raw(), INPUT_ADDR};
+    inst_queue[pc++] = vec_inst_t{convert_raw(op, 0)};
+    inst_queue[pc++] = vec_inst_t{shuffle_raw(0b110), 1};
+    inst_queue[pc++] = vec_inst_t{masked_store_raw(0), OUTPUT_ADDR};
+
+    MPMCQueue<vec_vfork_req_t, 16> vfork_queue;
+    MPMCQueue<vec_resp_t, 16> resp_queue;
+    vec_sparse_memory_t sparse_memory;
+    vec_executer_t executer(
+        &vfork_queue, &resp_queue, inst_queue.data(), uram.data(), &sparse_memory, 64, 1);
+    executer.start();
+
+    vec_vfork_req_t req;
+    req.block_id = 0;
+    req.inst_count = pc;
+    req.control.epilogue0_end = pc;
+    vfork_queue.enqueue(req);
+    const vec_resp_t resp = resp_queue.dequeue();
+    executer.stop();
+
+    if(!check(resp.block_id == 0 && resp.inst_count == pc,
+              "narrow vector block retirement")) {
+        return false;
+    }
+
+    std::array<uint32_t, 64> output{};
+    std::memcpy(output.data(), uram.data() + OUTPUT_ADDR, sizeof(output));
+    for(size_t word = 0; word < output.size() / 2; word++) {
+        const uint32_t low = execute_vec_convert_lane(input[2 * word], op, 0);
+        const uint32_t high = execute_vec_convert_lane(input[2 * word + 1], op, 0);
+        if(!check(output[word] == (low | (high << 16)),
+                  "narrow conversion and compression layout")) {
+            return false;
+        }
+    }
+    for(size_t word = output.size() / 2; word < output.size(); word++) {
+        if(!check(output[word] == initial_output[word],
+                  "narrow masked store preserves undefined lanes")) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool run_bf16_mxfp8()
@@ -105,7 +198,8 @@ bool run_bf16_mxfp8()
 
 int main()
 {
-    if(!run_bf16_mxfp8()) {
+    if(!run_fp32_lowp_compress(4) || !run_fp32_lowp_compress(5)
+       || !run_bf16_mxfp8()) {
         return 1;
     }
     std::cout << "vec_convert_execution_test passed\n";
