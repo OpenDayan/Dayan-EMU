@@ -42,7 +42,7 @@ namespace RVTNG {
             + dim1 * stride1
             + dim2 * stride2
             + dim3 * stride3;
-        base = base & 0xfffff;// 1M
+        base = base & 0x1fffff; // Architectural URAM address width is 21 bits.
         auto addr = offset + base;
         return (void*)(uram + addr);
     }
@@ -153,4 +153,3 @@ namespace RVTNG {
         }
     }
 } // namespace RVTNG
-

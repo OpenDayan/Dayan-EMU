@@ -9,6 +9,8 @@
 #include "vec.hpp"
 #include "rvt64.hpp"
 #include "thread_safe_queue.h"
+#include "tensor_context.hpp"
+#include "interrupt.hpp"
 
 // Core context class
 class core_context_t {
@@ -20,6 +22,8 @@ public:
     std::unique_ptr<RVTNG::mat_t> mat;
     std::unique_ptr<RVTNG::vec_t> vec;
     std::unique_ptr<RVTNG::rvt64_t> legacy;
+    std::unique_ptr<RVTNG::tensor_context_t> tensor_context;
+    std::unique_ptr<RVTNG::interrupt_controller_t> interrupts;
     std::unique_ptr<RVTNG::MPMCQueue<uint64_t, 32>> scoreboard;
     std::thread lsu_exec_thread;
     std::thread mat_exec_thread;
@@ -41,6 +45,9 @@ public:
 
     // Fetch one instruction for this core (called from main loop)
     void fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstMutex);
+
+private:
+    ulong issue_global(const rvt_pack_t* inst);
 };
 
 #endif // CORE_CONTEXT_HPP

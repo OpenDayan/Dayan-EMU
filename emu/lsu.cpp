@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <limits>
+#include <iterator>
 #include <thread>
 
 namespace RVTNG {
@@ -83,6 +84,16 @@ namespace RVTNG {
 
     void lsu_t::execute_dma(lsu_tcsr_t* tcsr, uint64_t src, uint64_t dst,
                             bool src_dram, bool dst_dram, bool gather, bool scatter) {
+        if(gather && !check_uram_access(src, sizeof(uint64_t),
+                                       interrupt_source_t::neodma_uram_table_range,
+                                       interrupt_source_t::neodma_uram_table_align)) {
+            return;
+        }
+        if(scatter && !check_uram_access(dst, sizeof(uint64_t),
+                                        interrupt_source_t::neodma_uram_table_range,
+                                        interrupt_source_t::neodma_uram_table_align)) {
+            return;
+        }
         if((gather && (src & 31)) || (scatter && (dst & 31))) {
             debugf("Fault! DMA address table is not aligned to 32B!\n");
             return;
@@ -91,6 +102,15 @@ namespace RVTNG {
         for(uint64_t index = 0; index <= tcsr->tableSize; index++) {
             uint64_t task_src = src + index * tcsr->tableStride;
             uint64_t task_dst = dst + index * tcsr->tableStride;
+            const uint64_t table_address = (gather ? src : dst) +
+                index * sizeof(uint64_t);
+            if((gather || scatter) &&
+               !check_uram_access(table_address, sizeof(uint64_t),
+                                  interrupt_source_t::neodma_uram_table_range,
+                                  interrupt_source_t::neodma_uram_table_align,
+                                  0)) {
+                return;
+            }
             if(gather && !load_table_entry(uram, src, index, &task_src)) {
                 return;
             }
@@ -150,6 +170,14 @@ namespace RVTNG {
                                     return false;
                                 }
                             } else {
+                                if(!check_uram_access(
+                                       addr, kLogicalRowBytes,
+                                       interrupt_source_t::neodma_uram_read_range,
+                                       interrupt_source_t::neodma_uram_read_align,
+                                       kUramPortBytes,
+                                       tcsr->uramReadSwizzleMBS)) {
+                                    return false;
+                                }
                                 read_uram_row(row, uram, addr, tcsr->uramReadSwizzleMBS);
                             }
                             fill_padding(row, tcsr->paddingValue, read_size);
@@ -190,6 +218,14 @@ namespace RVTNG {
                                     return false;
                                 }
                             } else {
+                                if(!check_uram_access(
+                                       addr, write_size,
+                                       interrupt_source_t::neodma_uram_write_range,
+                                       interrupt_source_t::neodma_uram_write_align,
+                                       kUramPortBytes,
+                                       tcsr->uramWriteSwizzleMBS)) {
+                                    return false;
+                                }
                                 write_uram_row(uram, addr, tcsr->uramWriteSwizzleMBS,
                                                transfer_buf, write_size);
                             }
@@ -204,9 +240,13 @@ namespace RVTNG {
 
     lsu_t::lsu_t(exec_unit_t* parrent, uint8_t* uram, uint8_t* dram,
                  uint8_t *const *cluster_urams,
-                 size_t cluster_core_count)
+                 size_t cluster_core_count,
+                 tensor_context_t* context,
+                 interrupt_controller_t* interrupts)
         : uram(uram), dram(dram), cluster_urams(cluster_urams),
-          cluster_core_count(cluster_core_count) {
+          cluster_core_count(cluster_core_count), context(context),
+          interrupts(interrupts),
+          active_context(tensor_context_snapshot_t::defaults()) {
         // TODO：分配资源
         parrent->register_issue_callback(this, &lsu_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);
@@ -217,56 +257,140 @@ namespace RVTNG {
     lsu_t::~lsu_t() {
         delete[] lsu_buffer;
     }
+
+    void lsu_t::enqueue_context(const rvt_pack_t& inst,
+                                const tensor_context_snapshot_t& context_value) {
+        inst_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
+    }
+
+    bool lsu_t::check_uram_access(
+        uint64_t address, size_t size,
+        interrupt_source_t range_source,
+        interrupt_source_t align_source,
+        size_t alignment,
+        uint64_t swizzle) const {
+        if(context == nullptr && interrupts == nullptr) {
+            return true;
+        }
+        const uint64_t physical_address = swizzle_addr_raw(address, swizzle);
+        if(alignment != 0 && (physical_address % alignment) != 0) {
+            if(interrupts) {
+                interrupts->raise(align_source,
+                                  static_cast<uint32_t>(physical_address));
+            }
+            return false;
+        }
+
+        const uint64_t access_size = std::max<size_t>(size, 1);
+        uint64_t consumed = 0;
+        while(consumed < access_size) {
+            if(address > std::numeric_limits<uint64_t>::max() - consumed) {
+                if(interrupts) {
+                    interrupts->raise(range_source,
+                                      std::numeric_limits<uint32_t>::max());
+                }
+                return false;
+            }
+            const uint64_t logical_address = address + consumed;
+            const uint64_t port_offset = logical_address & (kUramPortBytes - 1);
+            const uint64_t logical_port = logical_address - port_offset;
+            const uint64_t physical_port =
+                swizzle_addr_raw(logical_port, swizzle) &
+                ~(kUramPortBytes - 1);
+            if(!active_context.uram_range.contains(physical_port,
+                                                   kUramPortBytes)) {
+                if(interrupts) {
+                    interrupts->raise(range_source,
+                                      static_cast<uint32_t>(physical_port));
+                }
+                return false;
+            }
+            consumed += std::min<uint64_t>(kUramPortBytes - port_offset,
+                                           access_size - consumed);
+        }
+        return true;
+    }
+
     ulong lsu_t::issue(const rvt_pack_t* inst) {
         uint32_t unit = (inst->inst >> 23) & 0x1f;
         uint32_t tcsr_id = (inst->inst >> 13) & 0x3ff;
-        bool is_dma_tcsr = rvt::is_base(inst->inst) && (unit == RVT_UNIT_LSU || (unit== RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU));
+        bool is_dma_tcsr = rvt::is_base(inst->inst) &&
+            (unit == RVT_UNIT_LSU ||
+             (unit == RVT_UNIT_BASE &&
+              (tcsr_id & 0x1f) == RVT_UNIT_LSU));
         bool is_dma = rvt::is_lsu(inst->inst) | is_dma_tcsr;
         if(!is_dma) {
             // ignore
             return 0;
         }
-        this->inst_queue.enqueue(*inst);
+        const auto snapshot = context ? context->snapshot()
+                                      : tensor_context_snapshot_t::defaults();
+        this->inst_queue.enqueue(queued_tensor_inst_t{*inst, snapshot, false});
         // debugf("LSU: Enqueue LSU Instruction %x!\n",(uint32_t)inst->inst);
         return 1;
     }
     void lsu_t::execute(void) {
         while(1) {
             // Fetch
-            auto inst = inst_queue.dequeue();
+            auto queued = inst_queue.dequeue();
+            const auto& inst = queued.inst;
+            active_context = queued.context;
             // Fence
             MFENCE();
+            if(queued.context_write) {
+                continue;
+            }
             // Decode
             uint32_t unit = (inst.inst >> 23) & 0x1f;
             uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
             bool is_dma_tcsr_write = rvt_is_base(inst.inst) && unit == RVT_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 0;
             bool is_dma_tcsr_read  = rvt_is_base(inst.inst) && unit == RVT_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 1;
-            bool is_dma_sb_produce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 0;
-            bool is_dma_sb_bar     = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE && ((inst.inst >> 12) & 0x1) == 1;
+            bool is_dma_sb_produce = rvt_is_base(inst.inst) &&
+                unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU &&
+                ((inst.inst >> 12) & 0x1) == 0;
+            bool is_dma_sb_bar = rvt_is_base(inst.inst) &&
+                unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU &&
+                ((inst.inst >> 12) & 0x1) == 1;
             if(is_dma_tcsr_write || is_dma_tcsr_read) {
                 debugf("LSU: tcsr read write %d:\n", tcsr_id);
-                if(tcsr_id >= 8 * 32) {
-                    debugf("* Illgal id.\n");
+                const uint8_t logical_group = tcsr_id / 32;
+                const auto physical_group = active_context.physical_group(
+                    tensor_unit_t::lsu, logical_group, std::size(tcsr));
+                if(!physical_group) {
+                    if(interrupts) {
+                        interrupts->raise(
+                            interrupt_source_t::neodma_tcsr_access_error,
+                            static_cast<uint32_t>(inst.inst));
+                    }
+                    if(is_dma_tcsr_read) {
+                        rvt_commit_t cmt_pack{};
+                        cmt_pack.timestamp = inst.timestamp;
+                        cmt_pack.rd = (inst.inst >> 7) & 0x1f;
+                        cmt_pack.data = 0;
+                        commit(&cmt_pack);
+                    }
                     continue;
                 }
-                uint64_t* _tcsr = (uint64_t*) &this->tcsr;
+                uint64_t* _tcsr = reinterpret_cast<uint64_t*>(
+                    &this->tcsr[*physical_group]);
+                const uint32_t sub_address = tcsr_id & 0x1f;
                 if(is_dma_tcsr_write) {
-                    if((tcsr_id % 32) != 31) {
-                        const unsigned width = this->tcsr_width[tcsr_id & 0x1f];
+                    if(sub_address != 31) {
+                        const unsigned width = this->tcsr_width[sub_address];
                         const uint64_t mask = width == 64
                             ? std::numeric_limits<uint64_t>::max()
                             : ((uint64_t{1} << width) - 1);
-                        _tcsr[tcsr_id] = inst.rd & mask;
+                        _tcsr[sub_address] = inst.rd & mask;
                     }
                     // this->tcsr[tcsr_id / 32].checksum += 1;
-                    debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[tcsr_id]);
+                    debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[sub_address]);
                 } else {
                     rvt_commit_t cmt_pack;
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
-                    cmt_pack.data = _tcsr[tcsr_id];
+                    cmt_pack.data = _tcsr[sub_address];
                     commit(&cmt_pack);
-                    debugf("* read %lx -> %lx.\n", _tcsr[tcsr_id], cmt_pack.rd);
+                    debugf("* read %lx -> %lx.\n", _tcsr[sub_address], cmt_pack.rd);
                 }
                 continue;
             }
@@ -284,9 +408,25 @@ namespace RVTNG {
                 commit(&cmt_pack);
                 continue;
             }
+            if(!IS_RVT_LSU_DMA(inst.inst)) {
+                if(interrupts) {
+                    interrupts->raise(
+                        interrupt_source_t::neodma_decode_error,
+                        static_cast<uint32_t>(inst.inst));
+                }
+                continue;
+            }
             // DMA 指令执行
             {
                 const uint64_t group = RVT_LSU_DMA_GROUP(inst.inst);
+                lsu_tcsr_t empty_tcsr{};
+                const auto physical_group = active_context.physical_group(
+                    tensor_unit_t::lsu, group, std::size(tcsr));
+                if(!physical_group && interrupts) {
+                    interrupts->raise(
+                        interrupt_source_t::neodma_tcsr_access_error,
+                        static_cast<uint32_t>(inst.inst));
+                }
                 const bool src_is_dram = RVT_LSU_DMA_SRC(inst.inst);
                 const bool dst_is_dram = RVT_LSU_DMA_DST(inst.inst);
                 const bool gather = RVT_LSU_DMA_GATHER(inst.inst);
@@ -295,7 +435,9 @@ namespace RVTNG {
                     ? inst.rs1 : (inst.rs1 & kUramAddressMask);
                 const uint64_t dst = (dst_is_dram && !scatter)
                     ? inst.rd : (inst.rd & kUramAddressMask);
-                execute_dma(&this->tcsr[group], src, dst, src_is_dram, dst_is_dram,
+                lsu_tcsr_t* selected_tcsr = physical_group
+                    ? &this->tcsr[*physical_group] : &empty_tcsr;
+                execute_dma(selected_tcsr, src, dst, src_is_dram, dst_is_dram,
                             gather, scatter);
                 std::atomic_thread_fence(std::memory_order_release);
                 continue;

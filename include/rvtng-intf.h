@@ -151,7 +151,7 @@ static inline void* frontend_serve_inst_loop(void* arg) {
         // Waiting status;
         rvt_socket_pop_or_fatal(fdInstReq, &msg,
                                 "frontend instruction request core index");
-        rvt_pack_t instPkg = { 0 };
+        rvt_pack_t instPkg{};
         int n = frontend_instruction_fetch_service(msg, &instPkg);
         rvt_socket_push_or_fatal(fdInstRsp, n,
                                  "frontend instruction response valid flag");
@@ -372,6 +372,16 @@ static inline int backend_instruction_commit(int fdMsg, int coreIdx, const rvt_c
                              "backend instruction commit data");
     rvt_socket_push_or_fatal(fdMsg, pkg->timestamp,
                              "backend instruction commit timestamp");
+    return 1;
+}
+
+static inline int backend_interrupt_update(int fdMsg, int coreIdx, int level) {
+    rvt_socket_push_or_fatal(fdMsg, 0x1,
+                             "backend interrupt opcode");
+    rvt_socket_push_or_fatal(fdMsg, coreIdx,
+                             "backend interrupt core index");
+    rvt_socket_push_or_fatal(fdMsg, level != 0,
+                             "backend interrupt level");
     return 1;
 }
 

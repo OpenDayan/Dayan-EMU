@@ -1,0 +1,4 @@
+[submodule "deps/npu-qemu"]
+	path = deps/npu-qemu
+	url = https://git.rvnpu.cn/rvnpu/npu-qemu.git
+	branch = rvtv2/stable

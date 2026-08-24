@@ -3,6 +3,8 @@
 
 #include "exec_unit.hpp"
 #include "thread_safe_queue.h"
+#include "tensor_context.hpp"
+#include "interrupt.hpp"
 #include <cstddef>
 
 namespace RVTNG {
@@ -111,17 +113,21 @@ bool execute_conv2d(
 class mat_t: exec_unit_t {
 public:
     ulong issue(const rvt_pack_t* inst) override;
-    mat_t(exec_unit_t* parrent, uint8_t *uram);
+    mat_t(exec_unit_t* parrent, uint8_t *uram,
+          tensor_context_t* context = nullptr,
+          interrupt_controller_t* interrupts = nullptr);
     void execute(void);  // 独占循环
+    void enqueue_context(const rvt_pack_t& inst,
+                         const tensor_context_snapshot_t& context);
 
 protected:
     // 私有指令队列
-    MPMCQueue<rvt_pack_t, 32> inst_queue;
+    MPMCQueue<queued_tensor_inst_t, 32> inst_queue;
     // 私有 TCSR
-    mat_tcsr_t tcsr[8];
+    mat_tcsr_t tcsr[16];
     // tx.mat.setptr 为每个 TCSR group 保存的 A/B scale 基地址。
-    uint64_t aScaleBase[8] = {};
-    uint64_t bScaleBase[8] = {};
+    uint64_t aScaleBase[16] = {};
+    uint64_t bScaleBase[16] = {};
     // TCSR 写入掩码（按 conv_tcsr_t 规范定义，每个 offset 的位宽）
     // c,wi,hi,wo,ho,wk,hk,co, wiStride,hiStride,wkStride,hkStride,coStride,woStride,hoStride,
     // iSwizzleMBS,kSwizzleMBS,oSwizzleMBS, dataType,
@@ -135,6 +141,21 @@ protected:
     };
     // uram buffer
     uint8_t* uram;
+    tensor_context_t* context;
+    interrupt_controller_t* interrupts;
+    tensor_context_snapshot_t active_context;
+
+    bool check_uram_span(uint64_t address, uint64_t size,
+                         uint64_t swizzle,
+                         interrupt_source_t range_source,
+                         interrupt_source_t align_source) const;
+    bool validate_matmul_accesses(const mat_tcsr_t& control,
+                                  uint64_t a, uint64_t b, uint64_t c,
+                                  uint64_t a_scale, uint64_t b_scale,
+                                  bool acc) const;
+    bool validate_conv_accesses(const conv_tcsr_t& control,
+                                uint64_t input, uint64_t kernel,
+                                uint64_t output, bool acc) const;
 };
 
 }

@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 
 namespace RVTNG {
 
@@ -21,7 +22,8 @@ namespace {
 
 constexpr uint64_t VEC_CONTROL_DYNAMIC = 1ull << 40;
 constexpr uint64_t VEC_CONTROL_VALID_MASK = (1ull << 41) - 1;
-constexpr uint64_t VEC_URAM_SIZE = 1024ull * 1024ull;
+constexpr uint64_t VEC_URAM_SIZE = 1536ull * 1024ull;
+constexpr uint64_t VEC_URAM_ADDRESS_MASK = (uint64_t{1} << 21) - 1;
 
 struct vec_lane_t {
     std::array<uint32_t, 64> u32;
@@ -37,6 +39,8 @@ struct vec_thread_context_t {
     const vec_tcsr_t* tcsr = nullptr;
     uint8_t* uram = nullptr;
     vec_sparse_memory_t* sparse_memory = nullptr;
+    uram_range_t uram_range{};
+    interrupt_controller_t* interrupts = nullptr;
     size_t executed_insts = 0;
 };
 
@@ -78,12 +82,14 @@ static inline bool is_vec_tcsr(const rvt_pack_t& inst)
     uint32_t unit = (inst.inst >> 23) & 0x1f;
     uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
     return rvt::is_base(static_cast<uint32_t>(inst.inst))
-        && (unit == RVT_UNIT_VEC || (unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_VEC));
+        && (unit == RVT_UNIT_VEC ||
+            (unit == RVT_UNIT_BASE &&
+             (tcsr_id & 0x1f) == RVT_UNIT_VEC));
 }
 
 static inline bool is_vec_inst(uint64_t inst)
 {
-    return rvt::is_vec(static_cast<uint32_t>(inst));
+    return IS_RVT_TOP_VEC(inst);
 }
 
 static inline uint64_t mask_for_width(uint8_t width)
@@ -132,7 +138,7 @@ static inline const vec_lane_t& read_vec(const vec_thread_context_t& ctx, uint8_
 
 static inline uint64_t normalize_uram_addr(uint64_t addr)
 {
-    return addr & (VEC_URAM_SIZE - 1);
+    return addr & VEC_URAM_ADDRESS_MASK;
 }
 
 static inline uint32_t read_u32(uint8_t* uram, uint64_t addr)
@@ -205,6 +211,40 @@ static inline void write_linear(const vec_thread_context_t& ctx, bool sparse, ui
     }
 }
 
+static bool check_flexvec_group(const vec_thread_context_t& ctx,
+                                uint64_t address, unsigned group)
+{
+    if(ctx.interrupts == nullptr) {
+        return true;
+    }
+    const interrupt_source_t range_source = group == 0
+        ? interrupt_source_t::flexvec_uram_group_0_range
+        : interrupt_source_t::flexvec_uram_group_1_range;
+    const interrupt_source_t align_source = group == 0
+        ? interrupt_source_t::flexvec_uram_group_0_align
+        : interrupt_source_t::flexvec_uram_group_1_align;
+    if((address & 127) != 0) {
+        ctx.interrupts->raise(align_source, static_cast<uint32_t>(address));
+        return false;
+    }
+    if(!ctx.uram_range.contains(address, 128)) {
+        ctx.interrupts->raise(range_source, static_cast<uint32_t>(address));
+        return false;
+    }
+    return true;
+}
+
+static bool check_flexvec_access(const vec_thread_context_t& ctx,
+                                 uint64_t address, unsigned groups)
+{
+    for(unsigned group = 0; group < groups; ++group) {
+        if(!check_flexvec_group(ctx, address + group * 128, group)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void execute_vec_regular_load(vec_thread_context_t& ctx, const vec_inst_t& inst, uint32_t raw)
 {
     uint8_t vb = (raw >> 25) & 0x1;
@@ -224,6 +264,10 @@ static void execute_vec_regular_load(vec_thread_context_t& ctx, const vec_inst_t
         if(global_to_scalar) {
             ctx.s[sd] = inst.rd;
         } else {
+            if(!sparse && !check_flexvec_access(ctx, addr, 1)) {
+                ctx.s[sd] = 0;
+                return;
+            }
             ctx.s[sd] = static_cast<uint64_t>(read_linear(ctx, sparse, addr))
                 | (static_cast<uint64_t>(read_linear(ctx, sparse, addr + sizeof(uint32_t))) << 32);
         }
@@ -240,7 +284,15 @@ static void execute_vec_regular_load(vec_thread_context_t& ctx, const vec_inst_t
         return;
     }
     if(broadcast) {
+        if(!sparse && !check_flexvec_access(ctx, addr, 1)) {
+            dst.u32.fill(0);
+            return;
+        }
         dst.u32.fill(read_linear(ctx, sparse, addr));
+        return;
+    }
+    if(!sparse && !check_flexvec_access(ctx, addr, 2)) {
+        dst.u32.fill(0);
         return;
     }
     if(!sparse && read_dense_vec(ctx.uram, addr, dst)) {
@@ -264,6 +316,12 @@ static void execute_vec_regular_masked_load(vec_thread_context_t& ctx, const vec
     bool broadcast = subfunc == 0x05 || subfunc == 0x07 || from_scalar || from_gpr;
     const vec_lane_t& fallback = read_vec(ctx, vrs1);
     vec_lane_t& dst = write_vec(ctx, vb);
+
+    if(!sparse && !from_scalar && !from_gpr &&
+       !check_flexvec_access(ctx, addr, broadcast ? 1 : 2)) {
+        dst = fallback;
+        return;
+    }
 
     for(size_t lane = 0; lane < dst.u32.size(); lane++) {
         if(!mask_lane(ctx, s2, lane)) {
@@ -291,6 +349,10 @@ static void execute_vec_regular_store(vec_thread_context_t& ctx, const vec_inst_
     bool scalar_source = (subfunc & 0x2) != 0;
     const vec_lane_t& src = read_vec(ctx, vrs1);
 
+    if(!sparse && !check_flexvec_access(ctx, addr, scalar_source ? 1 : 2)) {
+        return;
+    }
+
     if(scalar_source) {
         write_linear(ctx, sparse, addr, static_cast<uint32_t>(ctx.s[vrs1 & 0x7]));
         return;
@@ -311,6 +373,10 @@ static void execute_vec_regular_masked_store(vec_thread_context_t& ctx, const ve
     bool sparse = (raw & 0x1000) != 0;
     uint64_t addr = inst.rd + vec_iter_value(vec_select_iter(*ctx.tcsr, true, sel), ctx.coord);
     const vec_lane_t& src = read_vec(ctx, vrs1);
+
+    if(!sparse && !check_flexvec_access(ctx, addr, 2)) {
+        return;
+    }
 
     for(size_t lane = 0; lane < src.u32.size(); lane++) {
         if(mask_lane(ctx, s2, lane)) {
@@ -847,6 +913,7 @@ static uint64_t execute_mode1(vec_thread_context_t& ctx,
                 debugf("VEC: branch ignored in mode1 at pc %lu\n", pc);
                 continue;
             }
+            ctx.uram_range = inst.context.uram_range;
             execute_one_vec_inst(ctx, inst);
             ctx.executed_insts++;
         }
@@ -873,6 +940,7 @@ static uint64_t execute_mode2(vec_thread_context_t& ctx,
     while(pc < task.inst_count && ctx.executed_insts < WATCHDOG_PLACEHOLDER_LIMIT) {
         uint64_t next_pc = pc + 1;
         const vec_inst_t& inst = task_inst(task, inst_queue, pc);
+        ctx.uram_range = inst.context.uram_range;
         if(is_branch_inst(inst.inst)) {
             if(!execute_vec_branch(ctx, inst, pc, task.inst_count, next_pc)) {
                 break;
@@ -894,6 +962,7 @@ static uint64_t execute_vec_coord(const vec_task_req_t& task,
                                   const vec_inst_t* inst_queue,
                                   uint8_t* uram,
                                   vec_sparse_memory_t* sparse_memory,
+                                  interrupt_controller_t* interrupts,
                                   size_t lane_count)
 {
     (void)lane_count;
@@ -902,6 +971,8 @@ static uint64_t execute_vec_coord(const vec_task_req_t& task,
     ctx.tcsr = &task.tcsr_snapshot;
     ctx.uram = uram;
     ctx.sparse_memory = sparse_memory;
+    ctx.uram_range = task.uram_range;
+    ctx.interrupts = interrupts;
 
     return task.control.dynamic ? execute_mode2(ctx, task, inst_queue)
                                 : execute_mode1(ctx, task, inst_queue);
@@ -911,12 +982,14 @@ static vec_task_resp_t execute_vec_task(const vec_task_req_t& task,
                                         const vec_inst_t* inst_queue,
                                         uint8_t* uram,
                                         vec_sparse_memory_t* sparse_memory,
+                                        interrupt_controller_t* interrupts,
                                         size_t lane_count)
 {
     uint64_t executed = 0;
     for(uint64_t outer = task.outer_begin; outer < task.outer_end;) {
         executed += execute_vec_coord(task, vec_outer_coord(task.tcsr_snapshot, outer),
-                                      inst_queue, uram, sparse_memory, lane_count);
+                                      inst_queue, uram, sparse_memory,
+                                      interrupts, lane_count);
         if(task.outer_stride >= task.outer_end - outer) {
             break;
         }
@@ -969,12 +1042,14 @@ vec_executer_t::vec_executer_t(MPMCQueue<vec_vfork_req_t, 16>* vfork_queue,
                                vec_sparse_memory_t* sparse_memory,
                                size_t lane_count,
                                size_t thread_count,
-                               size_t tracked_blocks)
+                               size_t tracked_blocks,
+                               interrupt_controller_t* interrupts)
     : vfork_queue(vfork_queue),
       resp_queue(resp_queue),
       inst_queue(inst_queue),
       uram(uram),
       sparse_memory(sparse_memory),
+      interrupts(interrupts),
       lane_count(lane_count),
       thread_count(thread_count),
       tracked_blocks(tracked_blocks),
@@ -1025,6 +1100,7 @@ void vec_executer_t::dispatch_block(active_block_t& block)
         task.outer_stride = job_count;
         task.control = block.req.control;
         task.tcsr_snapshot = block.req.tcsr_snapshot;
+        task.uram_range = block.req.uram_range;
         task_req_queue.enqueue(std::move(task));
     }
     block.total_tasks = job_count;
@@ -1093,23 +1169,36 @@ void vec_executer_t::worker_loop()
         if(!task) {
             continue;
         }
-        task_resp_queue.enqueue(execute_vec_task(*task, inst_queue, uram, sparse_memory, lane_count));
+        task_resp_queue.enqueue(execute_vec_task(
+            *task, inst_queue, uram, sparse_memory, interrupts, lane_count));
     }
 }
 
-vec_t::vec_t(exec_unit_t* parrent, uint8_t* uram, ulong lane_width)
-    : executer(&vfork_queue, &resp_queue, inst_queue, uram, &sparse_memory, lane_width),
+vec_t::vec_t(exec_unit_t* parrent, uint8_t* uram, ulong lane_width,
+             tensor_context_t* context,
+             interrupt_controller_t* interrupts)
+    : executer(&vfork_queue, &resp_queue, inst_queue, uram, &sparse_memory,
+               lane_width, 4, 4, interrupts),
       inst_queue_head(0),
       inst_queue_fork_head(0),
       inst_queue_tail(0),
       uram(uram),
-      lane_width(lane_width)
+      lane_width(lane_width),
+      context(context),
+      interrupts(interrupts),
+      active_context(tensor_context_snapshot_t::defaults())
 {
     parrent->register_issue_callback(this, &vec_t::issue);
     this->register_commit_callback(parrent, &exec_unit_t::commit);
     this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
-    std::memset(&tcsr, 0, sizeof(tcsr));
+    std::memset(tcsr, 0, sizeof(tcsr));
     executer.start();
+}
+
+void vec_t::enqueue_context(const rvt_pack_t& inst,
+                            const tensor_context_snapshot_t& context_value)
+{
+    issue_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
 }
 
 vec_t::~vec_t()
@@ -1122,7 +1211,9 @@ ulong vec_t::issue(const rvt_pack_t* inst)
     if(!is_vec_tcsr(*inst) && !is_vec_inst(inst->inst)) {
         return 0;
     }
-    issue_queue.enqueue(*inst);
+    const auto snapshot = context ? context->snapshot()
+                                  : tensor_context_snapshot_t::defaults();
+    issue_queue.enqueue(queued_tensor_inst_t{*inst, snapshot, false});
     return 1;
 }
 
@@ -1205,7 +1296,8 @@ void vec_t::drain_scoreboard_fences()
         });
 }
 
-void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id)
+void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id,
+                             const tensor_context_snapshot_t& context_value)
 {
     rvt_commit_t cmt_pack;
     cmt_pack.timestamp = inst.timestamp;
@@ -1216,7 +1308,8 @@ void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id)
     } else if(tcsr_id == 1) {
         cmt_pack.data = inst_queue_head - inst_queue_fork_head;
     } else if(tcsr_id <= 64) {
-        uint64_t* raw = reinterpret_cast<uint64_t*>(&tcsr);
+        const size_t bank = context_value.vec_tmap.base % std::size(tcsr);
+        uint64_t* raw = reinterpret_cast<uint64_t*>(&tcsr[bank]);
         cmt_pack.data = raw[tcsr_id];
     } else {
         debugf("VEC: illegal tcsr read id %u\n", tcsr_id);
@@ -1225,7 +1318,8 @@ void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id)
     commit(&cmt_pack);
 }
 
-void vec_t::handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id)
+void vec_t::handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id,
+                              const tensor_context_snapshot_t& context_value)
 {
     if(tcsr_id > 64) {
         debugf("VEC: illegal tcsr write id %u\n", tcsr_id);
@@ -1234,7 +1328,7 @@ void vec_t::handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id)
 
     uint64_t value = inst.rd & mask_for_width(tcsr_width[tcsr_id]);
     if(tcsr_id == 0) {
-        handle_vfork(value);
+        handle_vfork(value, context_value);
         return;
     }
     if(tcsr_id == 1) {
@@ -1242,14 +1336,16 @@ void vec_t::handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id)
         return;
     }
 
-    uint64_t* raw = reinterpret_cast<uint64_t*>(&tcsr);
+    const size_t bank = context_value.vec_tmap.base % std::size(tcsr);
+    uint64_t* raw = reinterpret_cast<uint64_t*>(&tcsr[bank]);
     raw[tcsr_id] = value;
-    if(auto it = iterator_by_offset(tcsr, tcsr_id)) {
+    if(auto it = iterator_by_offset(tcsr[bank], tcsr_id)) {
         (void)it;
     }
 }
 
-void vec_t::handle_vfork(uint64_t payload)
+void vec_t::handle_vfork(uint64_t payload,
+                         const tensor_context_snapshot_t& context_value)
 {
     vec_vfork_control_t control = decode_control(payload);
     uint64_t pending_unforked = inst_queue_head - inst_queue_fork_head;
@@ -1270,8 +1366,10 @@ void vec_t::handle_vfork(uint64_t payload)
     req.start_slot = inst_queue_fork_head;
     req.inst_count = inst_count;
     req.control = control;
-    req.tcsr_snapshot = tcsr;
+    const size_t bank = context_value.vec_tmap.base % std::size(tcsr);
+    req.tcsr_snapshot = tcsr[bank];
     req.tcsr_snapshot.control = payload;
+    req.uram_range = context_value.uram_range;
     inst_queue_fork_head += inst_count;
     inflight_blocks.push_back(req);
     vfork_queue.enqueue(req);
@@ -1288,7 +1386,7 @@ void vec_t::execute(void)
 {
     while(1) {
         poll_responses(false);
-        std::optional<rvt_pack_t> pending_inst;
+        std::optional<queued_tensor_inst_t> pending_inst;
         if(scoreboard_fences.empty()) {
             pending_inst = issue_queue.dequeue();
         } else {
@@ -1297,9 +1395,14 @@ void vec_t::execute(void)
                 continue;
             }
         }
-        const rvt_pack_t inst = std::move(*pending_inst);
+        const queued_tensor_inst_t queued = std::move(*pending_inst);
+        const rvt_pack_t& inst = queued.inst;
+        active_context = queued.context;
         MFENCE();
         poll_responses(false);
+        if(queued.context_write) {
+            continue;
+        }
 
         uint32_t unit = (inst.inst >> 23) & 0x1f;
         uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
@@ -1313,11 +1416,11 @@ void vec_t::execute(void)
             && unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 1;
 
         if(is_tcsr_write) {
-            handle_tcsr_write(inst, tcsr_id);
+            handle_tcsr_write(inst, tcsr_id, active_context);
             continue;
         }
         if(is_tcsr_read) {
-            handle_tcsr_read(inst, tcsr_id);
+            handle_tcsr_read(inst, tcsr_id, active_context);
             continue;
         }
         if(is_vec_sb_produce) {
@@ -1342,6 +1445,13 @@ void vec_t::execute(void)
             drain_scoreboard_fences();
             continue;
         }
+        if(rvt::is_base(static_cast<uint32_t>(inst.inst))) {
+            if(interrupts) {
+                interrupts->raise(interrupt_source_t::flexvec_decode_error,
+                                  static_cast<uint32_t>(inst.inst));
+            }
+            continue;
+        }
 
         while(!inst_queue_has_space()) {
             poll_responses(true);
@@ -1353,10 +1463,12 @@ void vec_t::execute(void)
             inst.rd,
             inst.rs1,
             inst.rs2,
-            inst.timestamp
+            inst.timestamp,
+            active_context
         };
         inst_queue_head++;
-        tcsr.control = inst_queue_free_count();
+        const size_t bank = active_context.vec_tmap.base % std::size(tcsr);
+        tcsr[bank].control = inst_queue_free_count();
     }
 }
 

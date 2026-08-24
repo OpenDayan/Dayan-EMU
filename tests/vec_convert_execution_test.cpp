@@ -1,5 +1,6 @@
 #include "vec.hpp"
 #include "vec_convert.hpp"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -194,12 +195,59 @@ bool run_bf16_mxfp8()
     return true;
 }
 
+bool run_per_instruction_context()
+{
+    using namespace RVTNG;
+
+    std::vector<uint8_t> uram(1536 * 1024);
+    std::array<uint32_t, 64> input;
+    input.fill(0x12345678);
+    std::memcpy(uram.data() + INPUT_ADDR, input.data(), sizeof(input));
+
+    std::array<vec_inst_t, VEC_INST_QUEUE_CAPACITY> inst_queue{};
+    vec_inst_t load{regular_load_raw(), INPUT_ADDR};
+    load.context = tensor_context_snapshot_t::defaults();
+    load.context.uram_range = uram_range_t{1, 2};
+    inst_queue[0] = load;
+    inst_queue[1] = vec_inst_t{regular_store_raw(), OUTPUT_ADDR};
+
+    MPMCQueue<vec_vfork_req_t, 16> vfork_queue;
+    MPMCQueue<vec_resp_t, 16> resp_queue;
+    vec_sparse_memory_t sparse_memory;
+    interrupt_controller_t interrupts;
+    vec_executer_t executer(
+        &vfork_queue, &resp_queue, inst_queue.data(), uram.data(),
+        &sparse_memory, 64, 1, 4, &interrupts);
+    executer.start();
+
+    vec_vfork_req_t req;
+    req.block_id = 0;
+    req.inst_count = 2;
+    req.control.epilogue0_end = 2;
+    req.uram_range = uram_range_t{0, 48};
+    vfork_queue.enqueue(req);
+    resp_queue.dequeue();
+    executer.stop();
+
+    std::array<uint32_t, 64> output{};
+    std::memcpy(output.data(), uram.data() + OUTPUT_ADDR, sizeof(output));
+    if(!check(std::all_of(output.begin(), output.end(),
+                          [](uint32_t value) { return value == 0; }),
+              "queued instruction keeps its own Context")) {
+        return false;
+    }
+    return check(interrupts.count() == 1 &&
+                 (interrupts.read(1) >> 32) == static_cast<uint16_t>(
+                     interrupt_source_t::flexvec_uram_group_0_range),
+                 "per-instruction Context raises FlexVec range interrupt");
+}
+
 }
 
 int main()
 {
     if(!run_fp32_lowp_compress(4) || !run_fp32_lowp_compress(5)
-       || !run_bf16_mxfp8()) {
+       || !run_bf16_mxfp8() || !run_per_instruction_context()) {
         return 1;
     }
     std::cout << "vec_convert_execution_test passed\n";

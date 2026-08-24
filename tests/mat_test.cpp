@@ -163,10 +163,12 @@ void test_instruction_decoder() {
     assert(IS_RVT_MAT_CONV2D(conv2d));
     assert(IS_RVT_MAT_CONV2DA(conv2da));
     assert(!IS_RVT_MAT_MM_FAMILY(conv2d));
-    assert(!IS_RVT_MAT_MM_FAMILY(mm | (1u << 28)));
+    assert(IS_RVT_MAT_MM_FAMILY(mm | (1u << 28)));
+    assert(IS_RVT_TOP_MAT(mm | (1u << 28)));
+    assert(!IS_RVT_TOP_VEC(mm | (1u << 28)));
     assert(IS_RVT_MAT_SETPTR(setptr));
     assert(!IS_RVT_MAT_MM_FAMILY(setptr));
-    assert(!IS_RVT_MAT_SETPTR(setptr | (1u << 7)));
+    assert(IS_RVT_MAT_SETPTR(setptr | (1u << 7)));
     assert(RVT_MAT_GROUP(setptr) == 6);
     assert(rvt::is_mat(mm));
     assert(rvt::is_mat(conv2d));

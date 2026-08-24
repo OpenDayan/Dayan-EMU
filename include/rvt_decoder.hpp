@@ -172,7 +172,7 @@
 //   [28:28] 0
 //   [31:29] funct3 = 001
 
-#define RVT_MAT_MM_MASK         0xF000607FULL
+#define RVT_MAT_MM_MASK         0xE000607FULL
 #define RVT_MAT_MM_PATTERN      0x2000000BULL
 
 #define IS_RVT_MAT_MM_FAMILY(inst) \
@@ -187,7 +187,7 @@
 #define IS_RVT_MAT_MM(inst)     (IS_RVT_MAT_MM_FAMILY(inst) && RVT_MAT_ACC(inst) == 0)
 #define IS_RVT_MAT_MMA(inst)    (IS_RVT_MAT_MM_FAMILY(inst) && RVT_MAT_ACC(inst) == 1)
 
-#define RVT_MAT_COMPUTE_MASK    0xF000007FULL
+#define RVT_MAT_COMPUTE_MASK    0xE000007FULL
 #define RVT_MAT_COMPUTE_PATTERN 0x2000000BULL
 
 #define IS_RVT_MAT_COMPUTE_FAMILY(inst) \
@@ -208,7 +208,7 @@
 //   [28:28] 0
 //   [31:29] funct3 = 001
 
-#define RVT_MAT_SETPTR_MASK     0xF0007FFFULL
+#define RVT_MAT_SETPTR_MASK     0xE000707FULL
 #define RVT_MAT_SETPTR_PATTERN  0x2000400BULL
 
 #define IS_RVT_MAT_SETPTR(inst) \
@@ -314,6 +314,17 @@
 #define IS_RVT_MAT(inst)   (IS_RVT_MAT_COMPUTE_FAMILY(inst) || IS_RVT_MAT_SETPTR(inst))
 #define IS_RVT_VEC(inst)   (IS_RVT_32(inst) && !IS_RVT_BASE(inst) && !IS_RVT_LSU(inst) && !IS_RVT_MAT(inst))
 #define IS_RVT_MACRO(inst) (IS_RVT_64(inst))
+
+// Top-level routing is intentionally broader than each unit's local decoder.
+// A routed-but-illegal instruction must be reported by that unit instead of
+// falling through to a different execution unit.
+#define IS_RVT_TOP_MAT(inst) \
+    (IS_RVT_32(inst) && RVT_BITS(inst, 31, 29) == 1 && \
+     (RVT_BITS(inst, 14, 13) == 0 || RVT_BITS(inst, 14, 13) == 1 || \
+      RVT_BITS(inst, 14, 12) == 4))
+#define IS_RVT_TOP_VEC(inst) \
+    (IS_RVT_32(inst) && !IS_RVT_BASE(inst) && !IS_RVT_LSU(inst) && \
+     !IS_RVT_TOP_MAT(inst))
 
 // 元素运算操作编码
 #define TX_ELEM_ADD 0x00  // 0b000000

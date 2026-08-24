@@ -25,9 +25,14 @@ constexpr size_t kRowBytes = 64;
 
 class test_lsu_t : public RVTNG::lsu_t {
 public:
+    using RVTNG::lsu_t::check_uram_access;
     using RVTNG::lsu_t::execute_dma;
     using RVTNG::lsu_t::execute_dma_once;
     using RVTNG::lsu_t::lsu_t;
+
+    void set_active_context(const RVTNG::tensor_context_snapshot_t& value) {
+        active_context = value;
+    }
 };
 
 RVTNG::lsu_tcsr_t make_control() {
@@ -299,6 +304,56 @@ void test_tensor_uram_windows(std::vector<uint8_t>& dram) {
                                  true, false));
 }
 
+void test_context_uram_interrupts(std::vector<uint8_t>& uram,
+                                  std::vector<uint8_t>& dram) {
+    RVTNG::exec_unit_t parent;
+    RVTNG::tensor_context_t context;
+    RVTNG::interrupt_controller_t interrupts;
+    test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0,
+                   &context, &interrupts);
+    auto snapshot = context.snapshot();
+    snapshot.uram_range = RVTNG::uram_range_t{4, 5};
+    lsu.set_active_context(snapshot);
+
+    constexpr uint64_t begin = 4 * RVTNG::URAM_CONTEXT_GRANULE;
+    constexpr uint64_t end = 5 * RVTNG::URAM_CONTEXT_GRANULE;
+    assert(lsu.check_uram_access(
+        begin, 32,
+        RVTNG::interrupt_source_t::neodma_uram_read_range,
+        RVTNG::interrupt_source_t::neodma_uram_read_align));
+    assert(!lsu.check_uram_access(
+        begin - 32, 32,
+        RVTNG::interrupt_source_t::neodma_uram_read_range,
+        RVTNG::interrupt_source_t::neodma_uram_read_align));
+    assert(!lsu.check_uram_access(
+        begin + 1, 32,
+        RVTNG::interrupt_source_t::neodma_uram_read_range,
+        RVTNG::interrupt_source_t::neodma_uram_read_align));
+    assert(!lsu.check_uram_access(
+        end - 32, 64,
+        RVTNG::interrupt_source_t::neodma_uram_read_range,
+        RVTNG::interrupt_source_t::neodma_uram_read_align));
+
+    const uint64_t swizzle = pack_swizzle(16, 1, 1);
+    assert(!lsu.check_uram_access(
+        begin, 32,
+        RVTNG::interrupt_source_t::neodma_uram_read_range,
+        RVTNG::interrupt_source_t::neodma_uram_read_align,
+        32, swizzle));
+    assert(lsu.check_uram_access(
+        begin + (uint64_t{1} << 16), 32,
+        RVTNG::interrupt_source_t::neodma_uram_read_range,
+        RVTNG::interrupt_source_t::neodma_uram_read_align,
+        32, swizzle));
+
+    assert(interrupts.count() == 4);
+    assert((interrupts.read(1) >> 32) == static_cast<uint16_t>(
+        RVTNG::interrupt_source_t::neodma_uram_read_range));
+    assert(static_cast<uint32_t>(interrupts.read(3)) == end);
+    assert(static_cast<uint32_t>(interrupts.read(4)) ==
+           begin + (uint64_t{1} << 16));
+}
+
 } // namespace
 
 int main() {
@@ -315,6 +370,7 @@ int main() {
     test_block_rows_dominate_padding(lsu, uram, dram);
     test_aligned_transpose(lsu, uram, dram);
     test_tensor_uram_windows(dram);
+    test_context_uram_interrupts(uram, dram);
     std::cout << "LSU DMA tests passed\n";
     return 0;
 }

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <iterator>
 #include <vector>
 
 namespace RVTNG {
@@ -19,6 +20,14 @@ namespace {
 constexpr uint64_t kMatmulBlockK = 128;
 constexpr uint64_t kMXScaleGroupK = 32;
 constexpr uint64_t kUramAddressMask = (uint64_t{1} << 21) - 1;
+
+static uint64_t packed_row_bytes(uint64_t elements, unsigned bits_per_element) {
+    const __uint128_t bits = __uint128_t{elements} * bits_per_element;
+    const __uint128_t bytes = (bits + 7) / 8;
+    return bytes > std::numeric_limits<uint64_t>::max()
+        ? std::numeric_limits<uint64_t>::max()
+        : static_cast<uint64_t>(bytes);
+}
 
 enum class operand_kind_t {
     tf32,
@@ -347,30 +356,228 @@ bool execute_conv2d(
     return true;
 }
 
-mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram):uram(uram) {
+mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram,
+             tensor_context_t* context,
+             interrupt_controller_t* interrupts)
+    : uram(uram), context(context), interrupts(interrupts),
+      active_context(tensor_context_snapshot_t::defaults()) {
     parrent->register_issue_callback(this, &mat_t::issue);
     this->register_commit_callback(parrent, &exec_unit_t::commit);
     this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
     std::memset(this->tcsr, 0, sizeof(this->tcsr));
 }
 
+void mat_t::enqueue_context(const rvt_pack_t& inst,
+                            const tensor_context_snapshot_t& context_value) {
+    inst_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
+}
+
+bool mat_t::check_uram_span(uint64_t address, uint64_t size,
+                            uint64_t swizzle,
+                            interrupt_source_t range_source,
+                            interrupt_source_t align_source) const {
+    if(context == nullptr && interrupts == nullptr) {
+        return true;
+    }
+    constexpr uint64_t portBytes = 32;
+    const uint64_t physicalAddress = swizzle_addr_raw(address, swizzle);
+    if((physicalAddress & (portBytes - 1)) != 0) {
+        if(interrupts) {
+            interrupts->raise(align_source,
+                              static_cast<uint32_t>(physicalAddress));
+        }
+        return false;
+    }
+    if(size == 0) {
+        size = 1;
+    }
+
+    uint64_t consumed = 0;
+    while(consumed < size) {
+        if(address > std::numeric_limits<uint64_t>::max() - consumed) {
+            if(interrupts) {
+                interrupts->raise(range_source,
+                                  std::numeric_limits<uint32_t>::max());
+            }
+            return false;
+        }
+        const uint64_t logicalAddress = address + consumed;
+        const uint64_t portOffset = logicalAddress & (portBytes - 1);
+        const uint64_t logicalPort = logicalAddress - portOffset;
+        const uint64_t physicalPort =
+            swizzle_addr_raw(logicalPort, swizzle) & ~(portBytes - 1);
+        if(!active_context.uram_range.contains(physicalPort, portBytes)) {
+            if(interrupts) {
+                interrupts->raise(range_source,
+                                  static_cast<uint32_t>(physicalPort));
+            }
+            return false;
+        }
+        consumed += std::min<uint64_t>(portBytes - portOffset,
+                                       size - consumed);
+    }
+    return true;
+}
+
+bool mat_t::validate_matmul_accesses(const mat_tcsr_t& control,
+                                     uint64_t a, uint64_t b, uint64_t c,
+                                     uint64_t a_scale, uint64_t b_scale,
+                                     bool acc) const {
+    const auto format = decode_mat_format(control.dataType);
+    if(!format) {
+        return true;
+    }
+    const uint64_t m = control.m + 1;
+    const uint64_t n = control.n + 1;
+    const uint64_t k = control.k + 1;
+    const uint64_t input_row = packed_row_bytes(k, format->bitsPerElement);
+    const auto checkRows = [this](
+        uint64_t base, uint64_t rows, uint64_t stride, uint64_t rowBytes,
+        uint64_t swizzle, interrupt_source_t rangeSource,
+        interrupt_source_t alignSource) {
+        for(uint64_t row = 0; row < rows; ++row) {
+            const __uint128_t wideAddress =
+                __uint128_t{base} + __uint128_t{row} * stride;
+            const uint64_t rowAddress =
+                wideAddress > std::numeric_limits<uint64_t>::max()
+                ? std::numeric_limits<uint64_t>::max()
+                : static_cast<uint64_t>(wideAddress);
+            if(!check_uram_span(rowAddress, rowBytes, swizzle,
+                                rangeSource, alignSource)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if(!checkRows(a, m, control.aStride, input_row, control.aSwizzleMBS,
+                  interrupt_source_t::neomat_uram_a_read_range,
+                  interrupt_source_t::neomat_uram_a_read_align) ||
+       !checkRows(b, n, control.bStride, input_row, control.bSwizzleMBS,
+                  interrupt_source_t::neomat_uram_b_read_range,
+                  interrupt_source_t::neomat_uram_b_read_align)) {
+        return false;
+    }
+    if(format->usesScale) {
+        const uint64_t scale_row = (k + kMXScaleGroupK - 1) / kMXScaleGroupK;
+        if(!checkRows(a_scale, m, control.aScaleStride, scale_row, 0,
+                      interrupt_source_t::neomat_uram_scale_read_range,
+                      interrupt_source_t::neomat_uram_scale_read_align) ||
+           !checkRows(b_scale, n, control.bScaleStride, scale_row, 0,
+                      interrupt_source_t::neomat_uram_scale_read_range,
+                      interrupt_source_t::neomat_uram_scale_read_align)) {
+            return false;
+        }
+    }
+    if(acc && !checkRows(c, m, control.cStride, n * sizeof(float),
+                         control.cSwizzleMBS,
+                         interrupt_source_t::neomat_uram_c_read_range,
+                         interrupt_source_t::neomat_uram_c_read_align)) {
+        return false;
+    }
+    return checkRows(c, m, control.cStride, n * sizeof(float),
+                     control.cSwizzleMBS,
+                     interrupt_source_t::neomat_uram_c_write_range,
+                     interrupt_source_t::neomat_uram_c_write_align);
+}
+
+bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
+                                   uint64_t input, uint64_t kernel,
+                                   uint64_t output, bool acc) const {
+    const auto format = decode_mat_format(control.dataType);
+    if(!format) {
+        return true;
+    }
+    const uint64_t input_tail = packed_row_bytes(control.c,
+                                                 format->bitsPerElement);
+    const auto checkRegions = [this](
+        uint64_t base,
+        uint64_t count0, uint64_t stride0,
+        uint64_t count1, uint64_t stride1,
+        uint64_t count2, uint64_t stride2,
+        uint64_t tailBytes, uint64_t swizzle,
+        interrupt_source_t rangeSource,
+        interrupt_source_t alignSource) {
+        for(uint64_t index0 = 0; index0 < count0; ++index0) {
+            for(uint64_t index1 = 0; index1 < count1; ++index1) {
+                for(uint64_t index2 = 0; index2 < count2; ++index2) {
+                const __uint128_t wideAddress = __uint128_t{base} +
+                    __uint128_t{index0} * stride0 +
+                    __uint128_t{index1} * stride1 +
+                    __uint128_t{index2} * stride2;
+                const uint64_t address =
+                    wideAddress > std::numeric_limits<uint64_t>::max()
+                    ? std::numeric_limits<uint64_t>::max()
+                    : static_cast<uint64_t>(wideAddress);
+                if(!check_uram_span(address, tailBytes, swizzle,
+                                    rangeSource, alignSource)) {
+                    return false;
+                }
+                }
+            }
+        }
+        return true;
+    };
+
+    if(!checkRegions(input,
+                     control.hi, control.hiStride,
+                     control.wi, control.wiStride,
+                     1, 0,
+                     input_tail, control.iSwizzleMBS,
+                     interrupt_source_t::neomat_uram_a_read_range,
+                     interrupt_source_t::neomat_uram_a_read_align) ||
+       !checkRegions(kernel,
+                     control.hk, control.hkStride,
+                     control.wk, control.wkStride,
+                     control.co, control.coStride,
+                     input_tail, control.kSwizzleMBS,
+                     interrupt_source_t::neomat_uram_b_read_range,
+                     interrupt_source_t::neomat_uram_b_read_align)) {
+        return false;
+    }
+    if(acc && !checkRegions(output,
+                            control.ho, control.hoStride,
+                            control.wo, control.woStride,
+                            1, 0,
+                            control.co * sizeof(float), control.oSwizzleMBS,
+                            interrupt_source_t::neomat_uram_c_read_range,
+                            interrupt_source_t::neomat_uram_c_read_align)) {
+        return false;
+    }
+    return checkRegions(output,
+                        control.ho, control.hoStride,
+                        control.wo, control.woStride,
+                        1, 0,
+                        control.co * sizeof(float), control.oSwizzleMBS,
+                        interrupt_source_t::neomat_uram_c_write_range,
+                        interrupt_source_t::neomat_uram_c_write_align);
+}
+
 ulong mat_t::issue(const rvt_pack_t* inst) {
     const uint32_t unit = (inst->inst >> 23) & 0x1f;
     const uint32_t tcsrId = (inst->inst >> 13) & 0x3ff;
     const bool isMatTcsr = rvt::is_base(inst->inst) &&
-        (unit == RVT_UNIT_MAT || (unit == RVT_UNIT_BASE && tcsrId == RVT_UNIT_MAT));
-    const bool isMat = rvt::is_mat(inst->inst) || isMatTcsr;
+        (unit == RVT_UNIT_MAT ||
+         (unit == RVT_UNIT_BASE && (tcsrId & 0x1f) == RVT_UNIT_MAT));
+    const bool isMat = IS_RVT_TOP_MAT(inst->inst) || isMatTcsr;
     if (!isMat) {
         return 0;
     }
-    this->inst_queue.enqueue(*inst);
+    const auto snapshot = context ? context->snapshot()
+                                  : tensor_context_snapshot_t::defaults();
+    this->inst_queue.enqueue(queued_tensor_inst_t{*inst, snapshot, false});
     return 1;
 }
 
 void mat_t::execute(void) {
     while (1) {
-        const auto inst = inst_queue.dequeue();
+        const auto queued = inst_queue.dequeue();
+        const auto& inst = queued.inst;
+        active_context = queued.context;
         MFENCE();
+        if(queued.context_write) {
+            continue;
+        }
 
         const uint32_t unit = (inst.inst >> 23) & 0x1f;
         const uint32_t tcsrId = (inst.inst >> 13) & 0x3ff;
@@ -379,30 +586,46 @@ void mat_t::execute(void) {
         const bool isMatTcsrRead = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 1;
         const bool isMatSbProduce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
+            tcsrId == RVT_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 0;
         const bool isMatSbBar = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
+            tcsrId == RVT_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 1;
 
         if (isMatTcsrWrite || isMatTcsrRead) {
             debugf("MAT: tcsr read/write %u:\n", tcsrId);
-            if (tcsrId >= 8 * 32) {
-                debugf("* Illegal id.\n");
+            const uint8_t logicalGroup = tcsrId / 32;
+            const auto physicalGroup = active_context.physical_group(
+                tensor_unit_t::mat, logicalGroup, std::size(tcsr));
+            if (!physicalGroup) {
+                if(interrupts) {
+                    interrupts->raise(interrupt_source_t::neomat_tcsr_access_error,
+                                      static_cast<uint32_t>(inst.inst));
+                }
+                if(isMatTcsrRead) {
+                    rvt_commit_t cmtPack{};
+                    cmtPack.timestamp = inst.timestamp;
+                    cmtPack.rd = (inst.inst >> 7) & 0x1f;
+                    commit(&cmtPack);
+                }
                 continue;
             }
-            uint64_t* rawTcsr = reinterpret_cast<uint64_t*>(&this->tcsr);
+            uint64_t* rawTcsr = reinterpret_cast<uint64_t*>(
+                &this->tcsr[*physicalGroup]);
+            const uint32_t subAddress = tcsrId & 0x1f;
             if (isMatTcsrWrite) {
-                if ((tcsrId % 32) != 31) {
-                    const unsigned width = this->tcsr_width[tcsrId & 0x1f];
-                    rawTcsr[tcsrId] = inst.rd & ((1ull << width) - 1);
+                if (subAddress != 31) {
+                    const unsigned width = this->tcsr_width[subAddress];
+                    rawTcsr[subAddress] = inst.rd & ((1ull << width) - 1);
                 }
-                debugf("* write %lx -> %lx.\n", inst.rd, rawTcsr[tcsrId]);
+                debugf("* write %lx -> %lx.\n", inst.rd, rawTcsr[subAddress]);
             } else {
                 rvt_commit_t cmtPack;
                 cmtPack.timestamp = inst.timestamp;
                 cmtPack.rd = (inst.inst >> 7) & 0x1f;
-                cmtPack.data = rawTcsr[tcsrId];
+                cmtPack.data = rawTcsr[subAddress];
                 commit(&cmtPack);
-                debugf("* read %lx -> %lx.\n", rawTcsr[tcsrId], cmtPack.rd);
+                debugf("* read %lx -> %lx.\n", rawTcsr[subAddress], cmtPack.rd);
             }
             continue;
         }
@@ -422,12 +645,32 @@ void mat_t::execute(void) {
             continue;
         }
 
+        if(!IS_RVT_MAT_COMPUTE_FAMILY(inst.inst) &&
+           !IS_RVT_MAT_SETPTR(inst.inst)) {
+            if(interrupts) {
+                interrupts->raise(interrupt_source_t::neomat_decode_error,
+                                  static_cast<uint32_t>(inst.inst));
+            }
+            continue;
+        }
+
         const uint64_t group = RVT_MAT_GROUP(inst.inst);
+        const auto physicalGroup = active_context.physical_group(
+            tensor_unit_t::mat, group, std::size(tcsr));
+        mat_tcsr_t emptyTcsr{};
+        if(!physicalGroup && interrupts) {
+            interrupts->raise(interrupt_source_t::neomat_tcsr_access_error,
+                              static_cast<uint32_t>(inst.inst));
+        }
         if (IS_RVT_MAT_SETPTR(inst.inst)) {
-            aScaleBase[group] = inst.rs1 & kUramAddressMask;
-            bScaleBase[group] = inst.rs2 & kUramAddressMask;
+            if(physicalGroup) {
+                aScaleBase[*physicalGroup] = inst.rs1 & kUramAddressMask;
+                bScaleBase[*physicalGroup] = inst.rs2 & kUramAddressMask;
+            }
             debugf("MAT: setptr group %lu A-scale=0x%lx B-scale=0x%lx\n",
-                   group, aScaleBase[group], bScaleBase[group]);
+                   group,
+                   physicalGroup ? aScaleBase[*physicalGroup] : 0,
+                   physicalGroup ? bScaleBase[*physicalGroup] : 0);
             continue;
         }
 
@@ -437,20 +680,38 @@ void mat_t::execute(void) {
         debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
         if (IS_RVT_MAT_CONV2D(inst.inst) || IS_RVT_MAT_CONV2DA(inst.inst)) {
             conv_tcsr_t convTcsr;
-            std::memcpy(&convTcsr, &tcsr[group], sizeof(convTcsr));
+            const mat_tcsr_t& selected = physicalGroup
+                ? tcsr[*physicalGroup] : emptyTcsr;
+            std::memcpy(&convTcsr, &selected, sizeof(convTcsr));
+            if(!validate_conv_accesses(convTcsr, a, b, c,
+                                       IS_RVT_MAT_CONV2DA(inst.inst))) {
+                continue;
+            }
             if (!execute_conv2d(uram, convTcsr, a, b, c, IS_RVT_MAT_CONV2DA(inst.inst))) {
                 debugf("MAT: unsupported Conv DataType 0x%02lx.\n", convTcsr.dataType);
             }
             continue;
         }
         if (!IS_RVT_MAT_MM_FAMILY(inst.inst)) {
-            debugf("MAT: unsupported compute mode 0x%lx.\n", RVT_MAT_MODE(inst.inst));
+            debugf("MAT: unsupported compute mode 0x%llx.\n",
+                   static_cast<unsigned long long>(RVT_MAT_MODE(inst.inst)));
             continue;
         }
-        if (!execute_matmul(uram, tcsr[group], a, b, c,
-                            aScaleBase[group], bScaleBase[group],
+        const mat_tcsr_t& selected = physicalGroup
+            ? tcsr[*physicalGroup] : emptyTcsr;
+        const uint64_t selectedAScale = physicalGroup
+            ? aScaleBase[*physicalGroup] : 0;
+        const uint64_t selectedBScale = physicalGroup
+            ? bScaleBase[*physicalGroup] : 0;
+        if(!validate_matmul_accesses(selected, a, b, c,
+                                    selectedAScale, selectedBScale,
+                                    RVT_MAT_ACC(inst.inst) != 0)) {
+            continue;
+        }
+        if (!execute_matmul(uram, selected, a, b, c,
+                            selectedAScale, selectedBScale,
                             RVT_MAT_ACC(inst.inst) != 0)) {
-            debugf("MAT: unsupported DataType 0x%02lx.\n", tcsr[group].dataType);
+            debugf("MAT: unsupported DataType 0x%02lx.\n", selected.dataType);
         }
     }
 }

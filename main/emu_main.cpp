@@ -9,6 +9,10 @@
 
 static constexpr size_t kUramBytesPerCore = 1536 * 1024;
 
+#ifndef RVTNG_DEFAULT_QEMU
+#define RVTNG_DEFAULT_QEMU "deps/npu-qemu/build/dl-riscv64"
+#endif
+
 int main(int argc, char** argv) {
     int fdMsg, fdInstReq, fdInstRsp;
     // Note: fdMsg and the instruction request/response pair are shared IPC channels.
@@ -136,7 +140,7 @@ int main(int argc, char** argv) {
         }
         if(qemu_arg_start >= argc) {// Default debug mode (no QEMU arguments provided)
             // Default mode: automatically add -smp parameter
-            execlp("/workspace/npu-qemu/build/dl-riscv64", "QEMU_THREAD", "-monitor", "null",
+            execlp(RVTNG_DEFAULT_QEMU, "QEMU_THREAD", "-monitor", "null",
             "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
             "-machine", "rvtng-v0", "-nographic", "-m", "4096",
             "-smp", smp_arg.c_str(), "-S", "-s", NULL);

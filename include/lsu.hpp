@@ -3,6 +3,8 @@
 
 #include "exec_unit.hpp"
 #include "thread_safe_queue.h"
+#include "tensor_context.hpp"
+#include "interrupt.hpp"
 #include <cstddef>
 
 namespace RVTNG {
@@ -46,9 +48,13 @@ public:
     ulong issue(const rvt_pack_t* inst) override;
     lsu_t(exec_unit_t* parrent, uint8_t *uram, uint8_t *dram,
           uint8_t *const *cluster_urams = nullptr,
-          size_t cluster_core_count = 0);
+          size_t cluster_core_count = 0,
+          tensor_context_t* context = nullptr,
+          interrupt_controller_t* interrupts = nullptr);
     ~lsu_t();
     void execute(void);  // 独占循环
+    void enqueue_context(const rvt_pack_t& inst,
+                         const tensor_context_snapshot_t& context);
 
 protected:
     uint8_t* tensor_uram_address(uint64_t addr, uint64_t size) const;
@@ -57,12 +63,17 @@ protected:
                      bool src_dram, bool dst_dram, bool gather, bool scatter);
     // 执行一个 DMA 子任务。
     bool execute_dma_once(lsu_tcsr_t* tcsr, uint64_t src, uint64_t dst, bool src_dram, bool dst_dram);
+    bool check_uram_access(uint64_t address, size_t size,
+                           interrupt_source_t range_source,
+                           interrupt_source_t align_source,
+                           size_t alignment = 32,
+                           uint64_t swizzle = 0) const;
     // 私有指令队列
-    MPMCQueue<rvt_pack_t, 128> inst_queue;
+    MPMCQueue<queued_tensor_inst_t, 128> inst_queue;
     // 私有 LSU buffer
     uint8_t* lsu_buffer;
     // 私有 TCSR
-    lsu_tcsr_t tcsr[8];
+    lsu_tcsr_t tcsr[16];
     // TCSR 写入掩码
     const char tcsr_width[32] = {
         8, 24, 24, 24, 28, 28, 28, 28, 28, 28, 28, 28, 3, 8, 6, 64, 24, 24,
@@ -76,6 +87,9 @@ protected:
     // URAM windows exposed on the tensor/D-side address range.
     uint8_t *const *cluster_urams;
     size_t cluster_core_count;
+    tensor_context_t* context;
+    interrupt_controller_t* interrupts;
+    tensor_context_snapshot_t active_context;
 };
 
 }

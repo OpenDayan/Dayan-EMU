@@ -7,8 +7,13 @@ BUILD_DIR := build
 OUTPUT_DIR := bin
 LSU_DMA_TEST := $(BUILD_DIR)/lsu_dma_test
 MAT_TEST := $(BUILD_DIR)/mat_test
+NPU_QEMU_DIR ?= deps/npu-qemu
+NPU_QEMU_BIN ?= $(NPU_QEMU_DIR)/build/dl-riscv64
+NPU_QEMU_JOBS ?= 16
+NPU_QEMU_ENV := env -u CC -u CXX -u AR -u CFLAGS -u CXXFLAGS \
+	-u CPPFLAGS -u LDFLAGS -u CROSS_COMPILE -u BUILD_TYPE
 
-.PHONY: all clean distclean help test $(SUB_DIRS)
+.PHONY: all clean distclean help test deps qemu force-npu-qemu-build $(SUB_DIRS)
 
 # 构建类型: Release（默认） / Debug
 BUILD_TYPE ?= Release
@@ -37,6 +42,7 @@ $(error Unknown BUILD_TYPE: $(BUILD_TYPE). Use Debug or Release)
 endif
 
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
+CPPFLAGS += -DRVTNG_DEFAULT_QEMU=\"$(abspath $(NPU_QEMU_BIN))\"
 
 # 导出变量到子 Makefile
 export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE BUILD_TYPE
@@ -45,17 +51,40 @@ export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE BUILD_TYPE
 OBJ_FILES :=
 
 # 默认目标
-all: $(SUB_DIRS) $(BUILD_DIR) $(OUTPUT_DIR)
+all: qemu $(SUB_DIRS) $(BUILD_DIR) $(OUTPUT_DIR)
 	@echo "Linking final executable..."
 	$(CXX) $(BUILD_DIR)/*.o $(LDFLAGS) -o $(OUTPUT_DIR)/$(PROJECT_NAME)
 	@echo "Build completed: $(OUTPUT_DIR)/$(PROJECT_NAME)"
 
 test: $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp $(LDFLAGS) -o $(LSU_DMA_TEST)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp utils/interrupt.cpp $(LDFLAGS) -o $(LSU_DMA_TEST)
 	$(LSU_DMA_TEST)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp $(LDFLAGS) -o $(MAT_TEST)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp utils/interrupt.cpp $(LDFLAGS) -o $(MAT_TEST)
 	$(MAT_TEST)
 	$(MAKE) -C tests BUILD_DIR=../$(BUILD_DIR)/tests test
+
+deps:
+	git submodule update --init --recursive
+
+qemu: $(NPU_QEMU_BIN)
+
+ifeq ($(abspath $(NPU_QEMU_BIN)),$(abspath $(NPU_QEMU_DIR)/build/dl-riscv64))
+$(NPU_QEMU_BIN): force-npu-qemu-build
+endif
+
+force-npu-qemu-build:
+
+$(NPU_QEMU_BIN):
+	@if [ ! -f "$(NPU_QEMU_DIR)/configure" ]; then \
+		echo "Missing $(NPU_QEMU_DIR). Run 'make deps' first."; \
+		exit 1; \
+	fi
+	mkdir -p $(NPU_QEMU_DIR)/build
+	@if [ ! -f "$(NPU_QEMU_DIR)/build/config-host.mak" ]; then \
+		cd $(NPU_QEMU_DIR)/build && $(NPU_QEMU_ENV) \
+			../configure --target-list=riscv64-softmmu; \
+	fi
+	$(NPU_QEMU_ENV) $(MAKE) -C $(NPU_QEMU_DIR)/build -j$(NPU_QEMU_JOBS)
 
 # 创建构建目录
 $(BUILD_DIR):
@@ -88,6 +117,8 @@ help:
 	@echo "Available targets:"
 	@echo "  all       - Build the project (default)"
 	@echo "  test      - Build and run unit tests"
+	@echo "  deps      - Initialize git submodules"
+	@echo "  qemu      - Configure and build deps/npu-qemu"
 	@echo "  clean     - Remove object files and temporary files"
 	@echo "  distclean - Remove all generated files"
 	@echo "  help      - Show this help message"
