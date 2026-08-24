@@ -51,7 +51,6 @@ struct vec_inst_t {
     uint64_t rs1 = 0;
     uint64_t rs2 = 0;
     uint64_t timestamp = 0;
-    tensor_context_snapshot_t context = tensor_context_snapshot_t::defaults();
 };
 
 struct vec_vfork_control_t {

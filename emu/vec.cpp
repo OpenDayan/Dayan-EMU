@@ -913,7 +913,6 @@ static uint64_t execute_mode1(vec_thread_context_t& ctx,
                 debugf("VEC: branch ignored in mode1 at pc %lu\n", pc);
                 continue;
             }
-            ctx.uram_range = inst.context.uram_range;
             execute_one_vec_inst(ctx, inst);
             ctx.executed_insts++;
         }
@@ -940,7 +939,6 @@ static uint64_t execute_mode2(vec_thread_context_t& ctx,
     while(pc < task.inst_count && ctx.executed_insts < WATCHDOG_PLACEHOLDER_LIMIT) {
         uint64_t next_pc = pc + 1;
         const vec_inst_t& inst = task_inst(task, inst_queue, pc);
-        ctx.uram_range = inst.context.uram_range;
         if(is_branch_inst(inst.inst)) {
             if(!execute_vec_branch(ctx, inst, pc, task.inst_count, next_pc)) {
                 break;
@@ -1463,8 +1461,7 @@ void vec_t::execute(void)
             inst.rd,
             inst.rs1,
             inst.rs2,
-            inst.timestamp,
-            active_context
+            inst.timestamp
         };
         inst_queue_head++;
         const size_t bank = active_context.vec_tmap.base % std::size(tcsr);
