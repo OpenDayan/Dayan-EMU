@@ -311,7 +311,7 @@ static void execute_vec_regular_masked_load(vec_thread_context_t& ctx, const vec
     uint8_t s2 = (raw >> 12) & 0x7;
     uint64_t addr = inst.rd;
     bool sparse = subfunc == 0x03 || subfunc == 0x07;
-    bool from_scalar = subfunc == 0x08;
+    bool from_scalar = subfunc == 0x0a;
     bool from_gpr = subfunc == 0x09;
     bool broadcast = subfunc == 0x05 || subfunc == 0x07 || from_scalar || from_gpr;
     const vec_lane_t& fallback = read_vec(ctx, vrs1);
@@ -354,7 +354,9 @@ static void execute_vec_regular_store(vec_thread_context_t& ctx, const vec_inst_
     }
 
     if(scalar_source) {
-        write_linear(ctx, sparse, addr, static_cast<uint32_t>(ctx.s[vrs1 & 0x7]));
+        const uint64_t value = ctx.s[vrs1 & 0x7];
+        write_linear(ctx, sparse, addr, static_cast<uint32_t>(value));
+        write_linear(ctx, sparse, addr + sizeof(uint32_t), static_cast<uint32_t>(value >> 32));
         return;
     }
     if(!sparse && write_dense_vec(ctx.uram, addr, src)) {
@@ -370,7 +372,7 @@ static void execute_vec_regular_masked_store(vec_thread_context_t& ctx, const ve
     uint8_t sel = (raw >> 20) & 0x3;
     uint8_t vrs1 = (raw >> 15) & 0x1f;
     uint8_t s2 = (raw >> 12) & 0x7;
-    bool sparse = (raw & 0x1000) != 0;
+    bool sparse = ((raw >> 22) & 0xf) == 0x2;
     uint64_t addr = inst.rd + vec_iter_value(vec_select_iter(*ctx.tcsr, true, sel), ctx.coord);
     const vec_lane_t& src = read_vec(ctx, vrs1);
 
@@ -728,20 +730,27 @@ static void execute_one_vec_inst(vec_thread_context_t& ctx, const vec_inst_t& in
     vec_fields_t f = decode_vec_fields(raw);
 
     switch(f.op6) {
-    case 0b010000:
-        if(f.vrs2 == 0b00000) {
-            execute_vec_regular_load(ctx, inst, raw);
-        } else {
+    case 0b010000: {
+        const uint8_t subfunc5 = (raw >> 20) & 0x1f;
+        const bool masked = subfunc5 == 0x01 || subfunc5 == 0x03 ||
+            subfunc5 == 0x05 || subfunc5 == 0x07 ||
+            subfunc5 == 0x09 || subfunc5 == 0x0a;
+        if(masked) {
             execute_vec_regular_masked_load(ctx, inst, raw);
-        }
-        return;
-    case 0b010001:
-        if(((raw >> 22) & 0b1) == 0) {
-            execute_vec_regular_store(ctx, inst, raw);
         } else {
-            execute_vec_regular_masked_store(ctx, inst, raw);
+            execute_vec_regular_load(ctx, inst, raw);
         }
         return;
+    }
+    case 0b010001: {
+        const uint8_t subfunc4 = (raw >> 22) & 0xf;
+        if(subfunc4 == 0x1 || subfunc4 == 0x2) {
+            execute_vec_regular_masked_store(ctx, inst, raw);
+        } else {
+            execute_vec_regular_store(ctx, inst, raw);
+        }
+        return;
+    }
     case 0b010010:
     case 0b010011:
     case 0b010100:

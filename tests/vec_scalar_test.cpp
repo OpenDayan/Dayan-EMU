@@ -151,10 +151,15 @@ int main()
     tcsr.v[1] = {43, 47, 53, 59, 61, 67, 71};
     const uint64_t expected_s = 17 + 2 * 19 + 3 * 23 + 5 * 29 + 7 * 31 + 11 * 37 + 13 * 41;
     const uint64_t expected_v = 43 + 2 * 47 + 3 * 53 + 5 * 59 + 7 * 61 + 11 * 67 + 13 * 71;
-    const auto getdim = decode_vec_scalar(scalar_raw(1, 1, 2, 3, 3));
-    if(!check(vec_outer_coord_value(coord, getdim.selector) == 13,
-            "generated getdim selects d5")
-        || !check(vec_iter_value(vec_select_iter(tcsr, false, 2), coord) == expected_s,
+    const uint64_t expected_dims[] = {5, 7, 11, 13};
+    for(uint8_t selector = 0; selector < 4; selector++) {
+        const auto getdim = decode_vec_scalar(scalar_raw(1, 1, 0, 3, selector));
+        if(!check(vec_outer_coord_value(coord, getdim.selector) == expected_dims[selector],
+                "getdim s1 selector")) {
+            return 1;
+        }
+    }
+    if(!check(vec_iter_value(vec_select_iter(tcsr, false, 2), coord) == expected_s,
             "gets six-dimensional iterator")
         || !check(vec_iter_value(vec_select_iter(tcsr, true, 1), coord) == expected_v,
             "getv six-dimensional iterator")) {

@@ -48,7 +48,7 @@ inline vec_scalar_fields_t decode_vec_scalar(uint32_t raw)
     fields.sd = (raw >> 23) & 0x7;
     fields.s2 = (raw >> 12) & 0x7;
     fields.s1 = (raw >> 7) & 0x7;
-    fields.selector = func2;
+    fields.selector = (func8 == 1 && func2 == 3) ? (fields.s1 & 0x3) : func2;
     fields.logic_lut = (((raw >> 15) & 0x3) << 2) | func2;
     fields.branch_offset = (func8 & 0x80) ? static_cast<int16_t>(func8) - 0x100 : func8;
 
@@ -167,8 +167,6 @@ inline int64_t vec_scalar_branch_target(uint64_t pc, int16_t offset)
 
 inline uint64_t vec_outer_coord_value(const vec_coord_t& coord, uint8_t selector)
 {
-    // The current getdim encoding fixes func2 to 3, so generated instructions
-    // select d5. Keep the selector explicit here to mirror the RTL data path.
     const uint64_t dims[] = {coord.d2, coord.d3, coord.d4, coord.d5};
     return dims[selector & 0x3];
 }
