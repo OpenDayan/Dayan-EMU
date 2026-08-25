@@ -251,12 +251,62 @@ bool run_vfork_context()
     return true;
 }
 
+bool run_flexvec_32_byte_alignment()
+{
+    using namespace RVTNG;
+
+    constexpr uint64_t uram_window_base = 0x00800000;
+    constexpr uint64_t input_offset = 32;
+    constexpr uint64_t output_offset = 0x200;
+    constexpr uint64_t input_addr = uram_window_base + input_offset;
+    constexpr uint64_t output_addr = uram_window_base + output_offset;
+    std::vector<uint8_t> uram(1024 * 1024);
+    std::array<uint32_t, 64> input{};
+    for(size_t lane = 0; lane < input.size(); ++lane) {
+        input[lane] = 0x10000u + lane;
+    }
+    std::memcpy(uram.data() + input_offset, input.data(), sizeof(input));
+
+    std::array<vec_inst_t, VEC_INST_QUEUE_CAPACITY> inst_queue{};
+    size_t pc = 0;
+    inst_queue[pc++] = vec_inst_t{regular_load_raw(), input_addr};
+    inst_queue[pc++] = vec_inst_t{regular_store_raw(), output_addr};
+
+    MPMCQueue<vec_vfork_req_t, 16> vfork_queue;
+    MPMCQueue<vec_resp_t, 16> resp_queue;
+    vec_sparse_memory_t sparse_memory;
+    interrupt_controller_t interrupts;
+    vec_executer_t executer(&vfork_queue, &resp_queue, inst_queue.data(),
+                            uram.data(), &sparse_memory, 64, 1, 4,
+                            &interrupts);
+    executer.start();
+
+    vec_vfork_req_t req;
+    req.block_id = 0;
+    req.inst_count = pc;
+    req.control.epilogue0_end = pc;
+    req.uram_range = uram_range_t{0, 48};
+    vfork_queue.enqueue(req);
+    const vec_resp_t resp = resp_queue.dequeue();
+    executer.stop();
+
+    std::array<uint32_t, 64> output{};
+    std::memcpy(output.data(), uram.data() + output_offset, sizeof(output));
+    return check(resp.block_id == 0 && resp.inst_count == pc,
+                 "window-addressed FlexVec block retirement")
+        && check(interrupts.count() == 0,
+                 "window-addressed 32-byte-aligned access does not interrupt")
+        && check(output == input,
+                 "window-addressed FlexVec load/store preserves data");
+}
+
 }
 
 int main()
 {
     if(!run_fp32_lowp_compress(4) || !run_fp32_lowp_compress(5)
-       || !run_bf16_mxfp8() || !run_vfork_context()) {
+       || !run_bf16_mxfp8() || !run_vfork_context()
+       || !run_flexvec_32_byte_alignment()) {
         return 1;
     }
     std::cout << "vec_convert_execution_test passed\n";

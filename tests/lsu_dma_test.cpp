@@ -1,5 +1,6 @@
 #include "lsu.hpp"
 #include "rvt_decoder.hpp"
+#include "swizzle.hpp"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -67,6 +68,18 @@ std::array<uint8_t, kRowBytes> pattern(unsigned seed) {
 
 uint64_t pack_swizzle(uint8_t m, uint8_t b, uint8_t s) {
     return (uint64_t{m} << 16) | (uint64_t{b} << 8) | s;
+}
+
+void test_swizzle_address_bits() {
+    constexpr uint64_t swizzle =
+        (uint64_t{5} << 16) | (uint64_t{3} << 8) | 5;
+    constexpr uint64_t high_bits = 0x00808000;
+
+    assert(RVTNG::swizzle_addr_raw(0x1234, swizzle) == 0x12b4);
+    assert(RVTNG::swizzle_addr_raw(high_bits | 0x1234, swizzle) ==
+           (high_bits | 0x12b4));
+    assert(RVTNG::swizzle_addr_raw(
+               0x1234, pack_swizzle(0x15, 0x13, 0x15)) == 0x12b4);
 }
 
 void test_decoder() {
@@ -334,14 +347,14 @@ void test_context_uram_interrupts(std::vector<uint8_t>& uram,
         RVTNG::interrupt_source_t::neodma_uram_read_range,
         RVTNG::interrupt_source_t::neodma_uram_read_align));
 
-    const uint64_t swizzle = pack_swizzle(16, 1, 1);
-    assert(!lsu.check_uram_access(
+    const uint64_t swizzle = pack_swizzle(8, 1, 5);
+    assert(lsu.check_uram_access(
         begin, 32,
         RVTNG::interrupt_source_t::neodma_uram_read_range,
         RVTNG::interrupt_source_t::neodma_uram_read_align,
         32, swizzle));
-    assert(lsu.check_uram_access(
-        begin + (uint64_t{1} << 16), 32,
+    assert(!lsu.check_uram_access(
+        begin - 32, 32,
         RVTNG::interrupt_source_t::neodma_uram_read_range,
         RVTNG::interrupt_source_t::neodma_uram_read_align,
         32, swizzle));
@@ -350,8 +363,7 @@ void test_context_uram_interrupts(std::vector<uint8_t>& uram,
     assert((interrupts.read(1) >> 32) == static_cast<uint16_t>(
         RVTNG::interrupt_source_t::neodma_uram_read_range));
     assert(static_cast<uint32_t>(interrupts.read(3)) == end);
-    assert(static_cast<uint32_t>(interrupts.read(4)) ==
-           begin + (uint64_t{1} << 16));
+    assert(static_cast<uint32_t>(interrupts.read(4)) == begin - 9 * 32);
 }
 
 } // namespace
@@ -363,6 +375,7 @@ int main() {
     test_lsu_t lsu(&parent, uram.data(), dram.data());
 
     test_decoder();
+    test_swizzle_address_bits();
     test_unaligned_partial_copy(lsu, uram, dram);
     test_tail_store_sizes(lsu, uram, dram);
     test_gather_scatter_all_directions(lsu, uram, dram);

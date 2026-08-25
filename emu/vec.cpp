@@ -24,6 +24,8 @@ constexpr uint64_t VEC_CONTROL_DYNAMIC = 1ull << 40;
 constexpr uint64_t VEC_CONTROL_VALID_MASK = (1ull << 41) - 1;
 constexpr uint64_t VEC_URAM_SIZE = 1536ull * 1024ull;
 constexpr uint64_t VEC_URAM_ADDRESS_MASK = (uint64_t{1} << 21) - 1;
+constexpr uint64_t FLEXVEC_URAM_ALIGNMENT = 32;
+constexpr uint64_t FLEXVEC_URAM_GROUP_BYTES = 128;
 
 struct vec_lane_t {
     std::array<uint32_t, 64> u32;
@@ -223,11 +225,13 @@ static bool check_flexvec_group(const vec_thread_context_t& ctx,
     const interrupt_source_t align_source = group == 0
         ? interrupt_source_t::flexvec_uram_group_0_align
         : interrupt_source_t::flexvec_uram_group_1_align;
-    if((address & 127) != 0) {
+    if((address & (FLEXVEC_URAM_ALIGNMENT - 1)) != 0) {
         ctx.interrupts->raise(align_source, static_cast<uint32_t>(address));
         return false;
     }
-    if(!ctx.uram_range.contains(address, 128)) {
+    const uint64_t physical_address = normalize_uram_addr(address);
+    if(!ctx.uram_range.contains(physical_address,
+                                FLEXVEC_URAM_GROUP_BYTES)) {
         ctx.interrupts->raise(range_source, static_cast<uint32_t>(address));
         return false;
     }
@@ -238,7 +242,8 @@ static bool check_flexvec_access(const vec_thread_context_t& ctx,
                                  uint64_t address, unsigned groups)
 {
     for(unsigned group = 0; group < groups; ++group) {
-        if(!check_flexvec_group(ctx, address + group * 128, group)) {
+        if(!check_flexvec_group(
+               ctx, address + group * FLEXVEC_URAM_GROUP_BYTES, group)) {
             return false;
         }
     }
