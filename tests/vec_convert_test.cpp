@@ -318,9 +318,10 @@ bool check_lane_semantics_and_unsupported()
             }
         }
         const auto compact = execute_vec_shuffle_compress(dst, 1);
-        for(size_t lane = 0; lane < compact.size() / 2; lane++) {
-            if(!check(compact[lane] == dst[2 * lane],
-                      "compress preserves packed narrowing order")) {
+        const size_t packed_lane_count = compact.size() / 2;
+        for(size_t lane = 0; lane < compact.size(); lane++) {
+            if(!check(compact[lane] == dst[2 * (lane % packed_lane_count)],
+                      "compress repeats packed narrowing order")) {
                 return false;
             }
         }

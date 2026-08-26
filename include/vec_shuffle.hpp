@@ -17,11 +17,12 @@ inline std::array<uint32_t, 64> execute_vec_shuffle_compress(
     }
 
     const size_t group_size = size_t{1} << p;
-    for(size_t lane = 0; lane < dst.size() / group_size; lane++) {
+    const size_t packed_lane_count = dst.size() / group_size;
+    for(size_t lane = 0; lane < dst.size(); lane++) {
         if((ctrl & 0x20) != 0) {
-            dst[lane * group_size] = src[lane];
+            dst[lane] = src[lane / group_size];
         } else {
-            dst[lane] = src[lane * group_size];
+            dst[lane] = src[(lane % packed_lane_count) * group_size];
         }
     }
     return dst;
