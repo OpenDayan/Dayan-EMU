@@ -425,6 +425,17 @@ inline std::array<uint32_t, LaneCount> execute_vec_convert(
         }
         return dst;
     }
+    const bool widen = op == static_cast<uint8_t>(vec_convert_op_t::fp16_to_fp32)
+        || op == static_cast<uint8_t>(vec_convert_op_t::bf16_to_fp32);
+    if(widen) {
+        for(size_t lane = 0; lane < LaneCount; lane += 2) {
+            dst[lane] = execute_vec_convert_lane(
+                src[lane], op, rounding_mode);
+            dst[lane + 1] = execute_vec_convert_lane(
+                src[lane] >> 16, op, rounding_mode);
+        }
+        return dst;
+    }
     const bool narrow = op == static_cast<uint8_t>(vec_convert_op_t::fp32_to_fp16)
         || op == static_cast<uint8_t>(vec_convert_op_t::fp32_to_bf16);
     if(narrow) {

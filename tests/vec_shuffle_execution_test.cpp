@@ -82,9 +82,13 @@ bool run_case(bool dynamic, uint64_t amount)
 
     std::array<uint32_t, 64> output;
     std::memcpy(output.data(), uram.data() + OUTPUT_ADDR, sizeof(output));
-    const size_t group_size = size_t{1} << amount;
+    const uint64_t ctrl = amount & 0x3f;
+    const size_t group_size = size_t{1} << (ctrl & 0x1f);
     for(size_t lane = 0; lane < output.size() / group_size; lane++) {
-        if(!check(output[lane] == input[lane * group_size], "decoded compress lane mapping")) {
+        const size_t dst_lane = (ctrl & 0x20) != 0 ? lane * group_size : lane;
+        const size_t src_lane = (ctrl & 0x20) != 0 ? lane : lane * group_size;
+        if(!check(output[dst_lane] == input[src_lane],
+                  "decoded compress/decompress lane mapping")) {
             return false;
         }
     }
@@ -95,7 +99,8 @@ bool run_case(bool dynamic, uint64_t amount)
 
 int main()
 {
-    if(!run_case(false, 2) || !run_case(true, 4)) {
+    if(!run_case(false, 2) || !run_case(true, 4)
+       || !run_case(false, 0x21) || !run_case(true, 0x24)) {
         return 1;
     }
     std::cout << "vec_shuffle_execution_test passed\n";

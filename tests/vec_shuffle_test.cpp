@@ -44,6 +44,20 @@ int main()
         if(!check(high_bits_dst == dst, "compress ignores parameter bits above bit 5")) {
             return 1;
         }
+
+        const auto decompressed = RVTNG::execute_vec_shuffle_compress(src, amount | 0x20);
+        for(size_t lane = 0; lane < dst.size() / group_size; lane++) {
+            if(!check(decompressed[lane * group_size] == src[lane],
+                      "decompress lane mapping")) {
+                return 1;
+            }
+        }
+        const auto decompress_high_bits = RVTNG::execute_vec_shuffle_compress(
+            src, amount | 0x60);
+        if(!check(decompress_high_bits == decompressed,
+                  "decompress ignores parameter bits above bit 5")) {
+            return 1;
+        }
     }
 
     if(!check(((shuffle_raw(0b110) >> 12) & 7) == 0b110,

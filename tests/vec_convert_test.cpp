@@ -261,6 +261,31 @@ bool check_bf16_mxfp8()
         && check(dst[48] == 0x78787878, "MXFP8 subcore 3 payload placement");
 }
 
+bool check_packed_widening()
+{
+    std::array<uint32_t, 64> src{};
+    for(size_t lane = 0; lane < src.size(); lane += 2) {
+        const uint16_t low = static_cast<uint16_t>(0x3c00 + lane);
+        const uint16_t high = static_cast<uint16_t>(0x4000 + lane);
+        src[lane] = low | (static_cast<uint32_t>(high) << 16);
+        src[lane + 1] = 0xdeadbeef;
+    }
+
+    for(uint8_t op : {uint8_t{2}, uint8_t{3}}) {
+        const auto dst = execute_vec_convert(src, op, 0);
+        for(size_t lane = 0; lane < src.size(); lane += 2) {
+            if(!check(dst[lane] == execute_vec_convert_lane(src[lane], op, 0),
+                      "packed widening low element")
+               || !check(dst[lane + 1]
+                             == execute_vec_convert_lane(src[lane] >> 16, op, 0),
+                         "packed widening high element")) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool check_lane_semantics_and_unsupported()
 {
     if(!check(execute_vec_convert_lane(0x00003c00, 2, 0)
@@ -330,7 +355,8 @@ int main()
 {
     if(!check_decode() || !check_s32_fp32() || !check_fp32_s32()
        || !check_fp16_fp32() || !check_fp32_fp16() || !check_bf16_fp32()
-       || !check_bf16_mxfp8() || !check_lane_semantics_and_unsupported()) {
+       || !check_bf16_mxfp8() || !check_packed_widening()
+       || !check_lane_semantics_and_unsupported()) {
         return 1;
     }
     std::cout << "vec_convert_test passed\n";
