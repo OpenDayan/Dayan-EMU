@@ -214,21 +214,46 @@ void test_gather_scatter_all_directions(test_lsu_t& lsu,
     }
 }
 
-void test_unaligned_uram_swizzle(test_lsu_t& lsu, std::vector<uint8_t>& uram,
+void test_unaligned_uram_swizzle(std::vector<uint8_t>& uram,
                                  std::vector<uint8_t>& dram) {
+    RVTNG::exec_unit_t parent;
+    RVTNG::tensor_context_t context;
+    RVTNG::interrupt_controller_t interrupts;
+    test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0,
+                   &context, &interrupts);
     auto store_control = make_control();
-    store_control.uramWriteSwizzleMBS = pack_swizzle(5, 3, 5);
+    store_control.requestReadSize = 31;
+    store_control.requestWriteSize = 31;
+    store_control.uramWriteSwizzleMBS = pack_swizzle(5, 1, 1);
     const uint64_t dram_src = kDramBase + 0x3005;
-    const uint64_t uram_addr = 0x4003;
+    const uint64_t uram_addr = 0x0050;
     const uint64_t dram_dst = kDramBase + 0x7009;
     const auto source = pattern(19);
     std::copy(source.begin(), source.end(), memory_ptr(uram, dram, true, dram_src));
+    std::fill(uram.begin() + 0x40, uram.begin() + 0x80, 0xa5);
 
     assert(lsu.execute_dma_once(&store_control, dram_src, uram_addr, true, false));
+    const uint64_t first_port = RVTNG::swizzle_addr(0x40,
+        store_control.uramWriteSwizzleMBS);
+    const uint64_t second_port = RVTNG::swizzle_addr(0x60,
+        store_control.uramWriteSwizzleMBS);
+    assert(first_port == 0x60);
+    assert(second_port == 0x40);
+    assert(std::equal(source.begin(), source.begin() + 16,
+                      uram.begin() + first_port + 16));
+    assert(std::equal(source.begin() + 16, source.begin() + 32,
+                      uram.begin() + second_port));
+    assert(uram[first_port + 15] == 0xa5);
+    assert(uram[second_port + 16] == 0xa5);
+
     auto load_control = make_control();
+    load_control.requestReadSize = 31;
+    load_control.requestWriteSize = 31;
     load_control.uramReadSwizzleMBS = store_control.uramWriteSwizzleMBS;
     assert(lsu.execute_dma_once(&load_control, uram_addr, dram_dst, false, true));
-    assert(std::equal(source.begin(), source.end(), memory_ptr(uram, dram, true, dram_dst)));
+    assert(std::equal(source.begin(), source.begin() + 32,
+                      memory_ptr(uram, dram, true, dram_dst)));
+    assert(interrupts.count() == 0);
 }
 
 void test_block_rows_dominate_padding(test_lsu_t& lsu, std::vector<uint8_t>& uram,
@@ -379,7 +404,7 @@ int main() {
     test_unaligned_partial_copy(lsu, uram, dram);
     test_tail_store_sizes(lsu, uram, dram);
     test_gather_scatter_all_directions(lsu, uram, dram);
-    test_unaligned_uram_swizzle(lsu, uram, dram);
+    test_unaligned_uram_swizzle(uram, dram);
     test_block_rows_dominate_padding(lsu, uram, dram);
     test_aligned_transpose(lsu, uram, dram);
     test_tensor_uram_windows(dram);

@@ -27,12 +27,13 @@ namespace RVTNG {
             }
         }
 
-        void read_uram_row(uint8_t* dst, const uint8_t* uram, uint64_t addr, uint64_t swizzle) {
-            for(uint64_t byte = 0; byte < kLogicalRowBytes;) {
+        void read_uram_row(uint8_t* dst, const uint8_t* uram, uint64_t addr,
+                           uint64_t swizzle, uint64_t size) {
+            for(uint64_t byte = 0; byte < size;) {
                 const uint64_t logical_addr = addr + byte;
                 const uint64_t port_offset = logical_addr & (kUramPortBytes - 1);
                 const uint64_t chunk = std::min(kUramPortBytes - port_offset,
-                                                kLogicalRowBytes - byte);
+                                                size - byte);
                 const uint64_t port_addr = logical_addr - port_offset;
                 const uint64_t physical_addr =
                     swizzle_addr(port_addr, swizzle) & ~(kUramPortBytes - 1);
@@ -139,6 +140,8 @@ namespace RVTNG {
             (minimum_rows + transpose_size - 1) / transpose_size * transpose_size;
         const uint64_t read_size = tcsr->requestReadSize + 1;
         const uint64_t write_size = tcsr->requestWriteSize + 1;
+        const uint64_t uram_alignment =
+            tcsr->blockTranspose < 6 ? kUramPortBytes : 0;
 
         for(uint64_t dim2 = 0 ; dim2 <= tcsr->dim2; dim2++) {
             for(uint64_t dim1 = 0; dim1 <= tcsr->dim1; dim1++) {
@@ -160,25 +163,27 @@ namespace RVTNG {
                             if(src_dram) {
                                 if(const uint8_t* tensor =
                                        tensor_uram_address(addr,
-                                                           kLogicalRowBytes)) {
-                                    std::memcpy(row, tensor, kLogicalRowBytes);
+                                                           read_size)) {
+                                    std::memcpy(row, tensor, read_size);
                                 } else if(addr >= kDramBase) {
                                     std::memcpy(row, dram + addr - kDramBase,
-                                                kLogicalRowBytes);
+                                                read_size);
                                 } else {
                                     debugf("Fault! Invalid D-side DMA source!\n");
                                     return false;
                                 }
                             } else {
                                 if(!check_uram_access(
-                                       addr, kLogicalRowBytes,
+                                       addr, read_size,
                                        interrupt_source_t::neodma_uram_read_range,
                                        interrupt_source_t::neodma_uram_read_align,
-                                       kUramPortBytes,
+                                       uram_alignment,
                                        tcsr->uramReadSwizzleMBS)) {
                                     return false;
                                 }
-                                read_uram_row(row, uram, addr, tcsr->uramReadSwizzleMBS);
+                                read_uram_row(row, uram, addr,
+                                              tcsr->uramReadSwizzleMBS,
+                                              read_size);
                             }
                             fill_padding(row, tcsr->paddingValue, read_size);
                         }
@@ -222,7 +227,7 @@ namespace RVTNG {
                                        addr, write_size,
                                        interrupt_source_t::neodma_uram_write_range,
                                        interrupt_source_t::neodma_uram_write_align,
-                                       kUramPortBytes,
+                                       uram_alignment,
                                        tcsr->uramWriteSwizzleMBS)) {
                                     return false;
                                 }
