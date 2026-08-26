@@ -303,7 +303,7 @@ bool check_lane_semantics_and_unsupported()
 
     bool reserved_rm_rejected = false;
     bool mxfp8_lane_rejected = false;
-    bool nvfp4_rejected = false;
+    bool mxfp4_rejected = false;
     try {
         (void)execute_vec_convert_lane(0, 0, 5);
     } catch(const std::invalid_argument&) {
@@ -317,11 +317,11 @@ bool check_lane_semantics_and_unsupported()
     try {
         (void)execute_vec_convert_lane(0, 7, 0);
     } catch(const std::invalid_argument&) {
-        nvfp4_rejected = true;
+        mxfp4_rejected = true;
     }
     return check(reserved_rm_rejected, "reserved rm must be rejected")
         && check(mxfp8_lane_rejected, "MXFP8 has no single-lane operation")
-        && check(nvfp4_rejected, "NVFP4 must remain explicitly unsupported");
+        && check(mxfp4_rejected, "MXFP4 must remain explicitly unsupported");
 }
 
 } // namespace

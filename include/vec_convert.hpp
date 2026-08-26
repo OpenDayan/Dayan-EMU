@@ -25,7 +25,7 @@ enum class vec_convert_op_t : uint8_t {
     fp32_to_fp16 = 4,
     fp32_to_bf16 = 5,
     bf16_to_mxfp8 = 6,
-    bf16_to_nvfp4 = 7,
+    bf16_to_mxfp4 = 7,
 };
 
 constexpr bool vec_rounding_mode_supported(uint8_t mode)
@@ -389,7 +389,7 @@ inline uint32_t execute_vec_convert_lane(uint32_t input, uint8_t op,
     case vec_convert_op_t::fp32_to_bf16:
         return vec_fp32_to_bf16(input, mode);
     case vec_convert_op_t::bf16_to_mxfp8:
-    case vec_convert_op_t::bf16_to_nvfp4:
+    case vec_convert_op_t::bf16_to_mxfp4:
         break;
     }
     throw std::invalid_argument("unsupported VEC convert operation");
