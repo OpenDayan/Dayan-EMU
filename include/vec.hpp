@@ -20,30 +20,34 @@
 namespace RVTNG {
 
 static constexpr uint32_t VEC_INST_QUEUE_CAPACITY = 512;
+static constexpr uint32_t VEC_TCSR_COUNT = 69;
 
 struct vec_iterator_t {
-    uint64_t base;
-    uint64_t dim0Stride;
-    uint64_t dim1Stride;
-    uint64_t dim2Stride;
-    uint64_t dim3Stride;
-    uint64_t dim4Stride;
-    uint64_t dim5Stride;
+    uint64_t base = 0;
+    uint64_t dim0Stride = 0;
+    uint64_t dim1Stride = 0;
+    uint64_t dim2Stride = 0;
+    uint64_t dim3Stride = 0;
+    uint64_t dim4Stride = 0;
+    uint64_t dim5Stride = 0;
 };
 
 struct vec_tcsr_t {
-    uint64_t control;
-    uint64_t vec_sync;
-    uint64_t dim0;
-    uint64_t dim1;
-    uint64_t dim2;
-    uint64_t dim3;
-    uint64_t dim4;
-    uint64_t dim5;
-    uint64_t implDefHint;
-    vec_iterator_t s[4];
-    vec_iterator_t v[4];
+    uint64_t control = 0;
+    uint64_t vec_sync = 0;
+    uint64_t dim0 = 0;
+    uint64_t dim1 = 0;
+    uint64_t dim2 = 0;
+    uint64_t dim3 = 0;
+    uint64_t dim4 = 0;
+    uint64_t dim5 = 0;
+    uint64_t implDefHint = 0;
+    vec_iterator_t s[4]{};
+    vec_iterator_t v[4]{};
+    uint64_t uramChannelStride[4] = {32, 32, 32, 32};
 };
+
+static_assert(sizeof(vec_tcsr_t) == VEC_TCSR_COUNT * sizeof(uint64_t));
 
 struct vec_inst_t {
     uint64_t inst = 0;
@@ -330,7 +334,7 @@ protected:
     interrupt_controller_t* interrupts;
     tensor_context_snapshot_t active_context;
 
-    const char tcsr_width[65] = {
+    const char tcsr_width[VEC_TCSR_COUNT] = {
         41, 0, 24, 24, 24, 24, 24, 24, 64,
         20, 20, 20, 20, 20, 20, 20,
         20, 20, 20, 20, 20, 20, 20,
@@ -339,7 +343,8 @@ protected:
         20, 20, 20, 20, 20, 20, 20,
         20, 20, 20, 20, 20, 20, 20,
         20, 20, 20, 20, 20, 20, 20,
-        20, 20, 20, 20, 20, 20, 20
+        20, 20, 20, 20, 20, 20, 20,
+        20, 20, 20, 20
     };
 };
 

@@ -26,6 +26,9 @@ constexpr uint64_t VEC_URAM_SIZE = 1536ull * 1024ull;
 constexpr uint64_t VEC_URAM_ADDRESS_MASK = (uint64_t{1} << 21) - 1;
 constexpr uint64_t FLEXVEC_URAM_ALIGNMENT = 32;
 constexpr uint64_t FLEXVEC_URAM_GROUP_BYTES = 128;
+constexpr uint64_t VEC_URAM_CHANNEL_BYTES = 32;
+constexpr size_t VEC_URAM_CHANNEL_COUNT = 8;
+constexpr size_t VEC_LANES_PER_URAM_CHANNEL = 8;
 
 struct vec_lane_t {
     std::array<uint32_t, 64> u32;
@@ -214,7 +217,8 @@ static inline void write_linear(const vec_thread_context_t& ctx, bool sparse, ui
 }
 
 static bool check_flexvec_group(const vec_thread_context_t& ctx,
-                                uint64_t address, unsigned group)
+                                uint64_t address, unsigned group,
+                                uint64_t access_bytes = FLEXVEC_URAM_GROUP_BYTES)
 {
     if(ctx.interrupts == nullptr) {
         return true;
@@ -231,9 +235,21 @@ static bool check_flexvec_group(const vec_thread_context_t& ctx,
     }
     const uint64_t physical_address = normalize_uram_addr(address);
     if(!ctx.uram_range.contains(physical_address,
-                                FLEXVEC_URAM_GROUP_BYTES)) {
+                                access_bytes)) {
         ctx.interrupts->raise(range_source, static_cast<uint32_t>(address));
         return false;
+    }
+    return true;
+}
+
+static bool check_flexvec_strided_access(const vec_thread_context_t& ctx,
+                                         uint64_t address, uint64_t stride)
+{
+    for(size_t channel = 0; channel < VEC_URAM_CHANNEL_COUNT; ++channel) {
+        if(!check_flexvec_group(ctx, address + channel * stride,
+                                channel / 4, VEC_URAM_CHANNEL_BYTES)) {
+            return false;
+        }
     }
     return true;
 }
@@ -296,15 +312,28 @@ static void execute_vec_regular_load(vec_thread_context_t& ctx, const vec_inst_t
         dst.u32.fill(read_linear(ctx, sparse, addr));
         return;
     }
-    if(!sparse && !check_flexvec_access(ctx, addr, 2)) {
-        dst.u32.fill(0);
-        return;
-    }
-    if(!sparse && read_dense_vec(ctx.uram, addr, dst)) {
+    if(!sparse) {
+        const uint64_t stride = ctx.tcsr->uramChannelStride[sel];
+        if(!check_flexvec_strided_access(ctx, addr, stride)) {
+            dst.u32.fill(0);
+            return;
+        }
+        if(stride == VEC_URAM_CHANNEL_BYTES &&
+           read_dense_vec(ctx.uram, addr, dst)) {
+            return;
+        }
+        for(size_t channel = 0; channel < VEC_URAM_CHANNEL_COUNT; ++channel) {
+            for(size_t lane = 0; lane < VEC_LANES_PER_URAM_CHANNEL; ++lane) {
+                const size_t dst_lane =
+                    channel * VEC_LANES_PER_URAM_CHANNEL + lane;
+                dst.u32[dst_lane] = read_u32(
+                    ctx.uram, addr + channel * stride + lane * sizeof(uint32_t));
+            }
+        }
         return;
     }
     for(size_t lane = 0; lane < dst.u32.size(); lane++) {
-        dst.u32[lane] = read_linear(ctx, sparse, addr + lane * sizeof(uint32_t));
+        dst.u32[lane] = read_linear(ctx, true, addr + lane * sizeof(uint32_t));
     }
 }
 
@@ -354,21 +383,38 @@ static void execute_vec_regular_store(vec_thread_context_t& ctx, const vec_inst_
     bool scalar_source = (subfunc & 0x2) != 0;
     const vec_lane_t& src = read_vec(ctx, vrs1);
 
-    if(!sparse && !check_flexvec_access(ctx, addr, scalar_source ? 1 : 2)) {
-        return;
-    }
-
     if(scalar_source) {
+        if(!sparse && !check_flexvec_access(ctx, addr, 1)) {
+            return;
+        }
         const uint64_t value = ctx.s[vrs1 & 0x7];
         write_linear(ctx, sparse, addr, static_cast<uint32_t>(value));
         write_linear(ctx, sparse, addr + sizeof(uint32_t), static_cast<uint32_t>(value >> 32));
         return;
     }
-    if(!sparse && write_dense_vec(ctx.uram, addr, src)) {
+
+    if(!sparse) {
+        const uint64_t stride = ctx.tcsr->uramChannelStride[sel];
+        if(!check_flexvec_strided_access(ctx, addr, stride)) {
+            return;
+        }
+        if(stride == VEC_URAM_CHANNEL_BYTES &&
+           write_dense_vec(ctx.uram, addr, src)) {
+            return;
+        }
+        for(size_t channel = 0; channel < VEC_URAM_CHANNEL_COUNT; ++channel) {
+            for(size_t lane = 0; lane < VEC_LANES_PER_URAM_CHANNEL; ++lane) {
+                const size_t src_lane =
+                    channel * VEC_LANES_PER_URAM_CHANNEL + lane;
+                write_u32(ctx.uram,
+                          addr + channel * stride + lane * sizeof(uint32_t),
+                          src.u32[src_lane]);
+            }
+        }
         return;
     }
     for(size_t lane = 0; lane < src.u32.size(); lane++) {
-        write_linear(ctx, sparse, addr + lane * sizeof(uint32_t), src.u32[lane]);
+        write_linear(ctx, true, addr + lane * sizeof(uint32_t), src.u32[lane]);
     }
 }
 
@@ -488,14 +534,45 @@ enum class vv_int32_op_t {
     srl,
     add,
     sub,
+    maxu,
+    minu,
+    max,
+    min,
     bitwise
 };
 
 enum class vv_fp32_op_t {
     add,
     sub,
-    mul
+    mul,
+    max,
+    min
 };
+
+static inline bool fp32_is_nan(uint32_t value)
+{
+    return (value & 0x7fffffffu) > 0x7f800000u;
+}
+
+static inline bool fp32_ordered_less(uint32_t lhs, uint32_t rhs)
+{
+    if(fp32_is_nan(lhs) || fp32_is_nan(rhs)) {
+        return false;
+    }
+
+    const uint32_t lhs_abs = lhs & 0x7fffffffu;
+    const uint32_t rhs_abs = rhs & 0x7fffffffu;
+    if((lhs_abs | rhs_abs) == 0) {
+        return false;
+    }
+
+    const bool lhs_negative = (lhs >> 31) != 0;
+    const bool rhs_negative = (rhs >> 31) != 0;
+    if(lhs_negative != rhs_negative) {
+        return lhs_negative;
+    }
+    return lhs_negative ? lhs > rhs : lhs < rhs;
+}
 
 enum class cmp_op_t {
     int32,
@@ -632,6 +709,20 @@ static void execute_vec_vv_int32(vec_thread_context_t& ctx, const vec_fields_t& 
             dst.u32[lane] = a.u32[lane] + b.u32[lane];
         } else if constexpr(Op == vv_int32_op_t::sub) {
             dst.u32[lane] = a.u32[lane] - b.u32[lane];
+        } else if constexpr(Op == vv_int32_op_t::maxu) {
+            dst.u32[lane] = a.u32[lane] > b.u32[lane]
+                ? a.u32[lane] : b.u32[lane];
+        } else if constexpr(Op == vv_int32_op_t::minu) {
+            dst.u32[lane] = a.u32[lane] < b.u32[lane]
+                ? a.u32[lane] : b.u32[lane];
+        } else if constexpr(Op == vv_int32_op_t::max) {
+            dst.u32[lane] = static_cast<int32_t>(a.u32[lane])
+                    > static_cast<int32_t>(b.u32[lane])
+                ? a.u32[lane] : b.u32[lane];
+        } else if constexpr(Op == vv_int32_op_t::min) {
+            dst.u32[lane] = static_cast<int32_t>(a.u32[lane])
+                    < static_cast<int32_t>(b.u32[lane])
+                ? a.u32[lane] : b.u32[lane];
         } else {
             dst.u32[lane] = execute_vec_bitwise_lut<uint32_t>(
                 a.u32[lane], b.u32[lane], vec_vv_int32_logic_lut(f.func8));
@@ -658,6 +749,16 @@ static void execute_vec_vv_fp32(vec_thread_context_t& ctx, const vec_fields_t& f
     vec_lane_t& dst = write_vec(ctx, f.vb);
 
     for(size_t lane = 0; lane < dst.u32.size(); lane++) {
+        if constexpr(Op == vv_fp32_op_t::max) {
+            dst.u32[lane] = fp32_ordered_less(b.u32[lane], a.u32[lane])
+                ? a.u32[lane] : b.u32[lane];
+            continue;
+        } else if constexpr(Op == vv_fp32_op_t::min) {
+            dst.u32[lane] = fp32_ordered_less(a.u32[lane], b.u32[lane])
+                ? a.u32[lane] : b.u32[lane];
+            continue;
+        }
+
         float lhs;
         float rhs;
         float out;
@@ -861,6 +962,18 @@ static void execute_one_vec_inst(vec_thread_context_t& ctx, const vec_inst_t& in
         case 0x07:
             execute_vec_vv_mul24(ctx, f);
             return;
+        case 0x08:
+            execute_vec_vv_int32<vv_int32_op_t::maxu>(ctx, f);
+            return;
+        case 0x09:
+            execute_vec_vv_int32<vv_int32_op_t::minu>(ctx, f);
+            return;
+        case 0x0a:
+            execute_vec_vv_int32<vv_int32_op_t::max>(ctx, f);
+            return;
+        case 0x0b:
+            execute_vec_vv_int32<vv_int32_op_t::min>(ctx, f);
+            return;
         default:
             if(vec_vv_int32_is_bitwise(f.func8)) {
                 execute_vec_vv_int32<vv_int32_op_t::bitwise>(ctx, f);
@@ -879,6 +992,12 @@ static void execute_one_vec_inst(vec_thread_context_t& ctx, const vec_inst_t& in
             return;
         case 0b010:
             execute_vec_vv_fp32<vv_fp32_op_t::mul>(ctx, f);
+            return;
+        case 0b00100:
+            execute_vec_vv_fp32<vv_fp32_op_t::max>(ctx, f);
+            return;
+        case 0b00101:
+            execute_vec_vv_fp32<vv_fp32_op_t::min>(ctx, f);
             return;
         default:
             debugf("VEC: unsupported vv.fp32 op 0x%x\n", f.func8 >> 3);
@@ -1203,7 +1322,7 @@ vec_t::vec_t(exec_unit_t* parrent, uint8_t* uram, ulong lane_width,
     parrent->register_issue_callback(this, &vec_t::issue);
     this->register_commit_callback(parrent, &exec_unit_t::commit);
     this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
-    std::memset(tcsr, 0, sizeof(tcsr));
+    std::fill(std::begin(tcsr), std::end(tcsr), vec_tcsr_t{});
     executer.start();
 }
 
@@ -1319,7 +1438,7 @@ void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id,
         cmt_pack.data = inst_queue_free_count();
     } else if(tcsr_id == 1) {
         cmt_pack.data = inst_queue_head - inst_queue_fork_head;
-    } else if(tcsr_id <= 64) {
+    } else if(tcsr_id < VEC_TCSR_COUNT) {
         const size_t bank = context_value.vec_tmap.base % std::size(tcsr);
         uint64_t* raw = reinterpret_cast<uint64_t*>(&tcsr[bank]);
         cmt_pack.data = raw[tcsr_id];
@@ -1333,7 +1452,7 @@ void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id,
 void vec_t::handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id,
                               const tensor_context_snapshot_t& context_value)
 {
-    if(tcsr_id > 64) {
+    if(tcsr_id >= VEC_TCSR_COUNT) {
         debugf("VEC: illegal tcsr write id %u\n", tcsr_id);
         return;
     }
