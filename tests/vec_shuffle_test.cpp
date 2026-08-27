@@ -31,9 +31,9 @@ int main()
         src[lane] = 0x1000 + lane;
     }
 
-    for(uint64_t amount = 1; amount <= 5; amount++) {
-        const auto dst = RVTNG::execute_vec_shuffle_compress(src, amount);
-        const size_t group_size = size_t{1} << amount;
+    for(uint64_t ctrl = 0; ctrl <= 4; ++ctrl) {
+        const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
+        const size_t group_size = size_t{1} << (ctrl + 1);
         const size_t packed_lane_count = dst.size() / group_size;
         for(size_t lane = 0; lane < dst.size(); lane++) {
             const size_t packed_lane = lane % packed_lane_count;
@@ -43,12 +43,15 @@ int main()
             }
         }
 
-        const auto high_bits_dst = RVTNG::execute_vec_shuffle_compress(src, amount | 0x40);
+        const auto high_bits_dst = RVTNG::execute_vec_shuffle_compress(
+            src, ctrl | 0x40);
         if(!check(high_bits_dst == dst, "compress ignores parameter bits above bit 5")) {
             return 1;
         }
 
-        const auto decompressed = RVTNG::execute_vec_shuffle_compress(src, amount | 0x20);
+        const uint64_t decompress_ctrl = ctrl | 0x20;
+        const auto decompressed = RVTNG::execute_vec_shuffle_compress(
+            src, decompress_ctrl);
         for(size_t lane = 0; lane < decompressed.size(); lane++) {
             if(!check(decompressed[lane] == src[lane / group_size],
                       "decompress group broadcast mapping")) {
@@ -56,14 +59,14 @@ int main()
             }
         }
         const auto decompress_high_bits = RVTNG::execute_vec_shuffle_compress(
-            src, amount | 0x60);
+            src, decompress_ctrl | 0x40);
         if(!check(decompress_high_bits == decompressed,
                   "decompress ignores parameter bits above bit 5")) {
             return 1;
         }
 
         const auto decompress_then_compress = RVTNG::execute_vec_shuffle_compress(
-            decompressed, amount);
+            decompressed, ctrl);
         for(size_t lane = 0; lane < decompress_then_compress.size(); lane++) {
             if(!check(decompress_then_compress[lane]
                           == src[lane % packed_lane_count],
@@ -73,7 +76,7 @@ int main()
         }
 
         const auto compress_then_decompress = RVTNG::execute_vec_shuffle_compress(
-            dst, amount | 0x20);
+            dst, decompress_ctrl);
         for(size_t lane = 0; lane < compress_then_decompress.size(); lane++) {
             if(!check(compress_then_decompress[lane]
                           == src[(lane / group_size) * group_size],
@@ -81,6 +84,23 @@ int main()
                 return 1;
             }
         }
+    }
+
+    for(uint64_t ctrl = 0x25; ctrl <= 0x27; ++ctrl) {
+        const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
+        const size_t numerator = ctrl - 0x20;
+        for(size_t lane = 0; lane < dst.size(); ++lane) {
+            if(!check(dst[lane] == src[(numerator * lane) / 8],
+                      "fractional scatter mapping")) {
+                return 1;
+            }
+        }
+    }
+
+    const std::array<uint32_t, 64> zeros{};
+    if(!check(RVTNG::execute_vec_shuffle_compress(src, 0x05) == zeros,
+              "reserved compress control has deterministic undefined result")) {
+        return 1;
     }
 
     if(!check(((shuffle_raw(0b110) >> 12) & 7) == 0b110,

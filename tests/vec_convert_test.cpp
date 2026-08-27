@@ -317,7 +317,7 @@ bool check_lane_semantics_and_unsupported()
                 return false;
             }
         }
-        const auto compact = execute_vec_shuffle_compress(dst, 1);
+        const auto compact = execute_vec_shuffle_compress(dst, 0x00);
         const size_t packed_lane_count = compact.size() / 2;
         for(size_t lane = 0; lane < compact.size(); lane++) {
             if(!check(compact[lane] == dst[2 * (lane % packed_lane_count)],

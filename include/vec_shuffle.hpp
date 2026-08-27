@@ -11,18 +11,25 @@ inline std::array<uint32_t, 64> execute_vec_shuffle_compress(
 {
     std::array<uint32_t, 64> dst{};
     const uint64_t ctrl = amount & 0x3f;
-    const uint64_t p = ctrl & 0x1f;
-    if(p == 0 || p >= 6) {
+    if(ctrl <= 0x04) {
+        const size_t group_size = size_t{1} << (ctrl + 1);
+        const size_t packed_lane_count = dst.size() / group_size;
+        for(size_t lane = 0; lane < dst.size(); ++lane) {
+            dst[lane] = src[(lane % packed_lane_count) * group_size];
+        }
         return dst;
     }
-
-    const size_t group_size = size_t{1} << p;
-    const size_t packed_lane_count = dst.size() / group_size;
-    for(size_t lane = 0; lane < dst.size(); lane++) {
-        if((ctrl & 0x20) != 0) {
+    if(ctrl >= 0x20 && ctrl <= 0x24) {
+        const size_t group_size = size_t{1} << ((ctrl & 0x1f) + 1);
+        for(size_t lane = 0; lane < dst.size(); ++lane) {
             dst[lane] = src[lane / group_size];
-        } else {
-            dst[lane] = src[(lane % packed_lane_count) * group_size];
+        }
+        return dst;
+    }
+    if(ctrl >= 0x25 && ctrl <= 0x27) {
+        const size_t numerator = ctrl - 0x20;
+        for(size_t lane = 0; lane < dst.size(); ++lane) {
+            dst[lane] = src[(numerator * lane) / 8];
         }
     }
     return dst;

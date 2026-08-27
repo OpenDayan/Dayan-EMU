@@ -8,7 +8,6 @@
 #include "swizzle.hpp"
 
 #include <algorithm>
-#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -30,6 +29,13 @@ constexpr uint64_t kBScaleBase = 0x60000;
 
 size_t align32(size_t value) {
     return (value + 31) & ~size_t{31};
+}
+
+constexpr uint16_t paired_type(uint8_t aBase, uint8_t bBase,
+                               bool aMX = false, bool bMX = false) {
+    return RVT_MAT_PAIRED_DATATYPE(
+        RVT_MAT_OPERAND(aBase, aMX),
+        RVT_MAT_OPERAND(bBase, bMX));
 }
 
 template<typename T>
@@ -81,18 +87,6 @@ std::vector<uint8_t> pack_u16(std::initializer_list<uint16_t> values) {
         packed[index * 2] = static_cast<uint8_t>(value);
         packed[index * 2 + 1] = static_cast<uint8_t>(value >> 8);
         ++index;
-    }
-    return packed;
-}
-
-std::vector<uint8_t> pack_f32(std::initializer_list<uint32_t> bitPatterns) {
-    std::vector<uint8_t> packed;
-    packed.reserve(bitPatterns.size() * sizeof(uint32_t));
-    for (const uint32_t bits : bitPatterns) {
-        packed.push_back(static_cast<uint8_t>(bits));
-        packed.push_back(static_cast<uint8_t>(bits >> 8));
-        packed.push_back(static_cast<uint8_t>(bits >> 16));
-        packed.push_back(static_cast<uint8_t>(bits >> 24));
     }
     return packed;
 }
@@ -156,7 +150,10 @@ void test_instruction_decoder() {
     constexpr uint32_t setptr = 0x2000400bu | (3u << 15) |
         (5u << 20) | (6u << 25);
 
-    static_assert(RVT_TYPE_TF32 == RVT_TYPE_FP32);
+    static_assert(RVT_TYPE_S4 == 0x18);
+    static_assert(RVT_TYPE_U4 == 0x19);
+    static_assert(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16)
+                  == 0x8452);
     assert(IS_RVT_MAT_MM(mm));
     assert(IS_RVT_MAT_MMA(mma));
     assert(!IS_RVT_MAT_MMA(mm));
@@ -318,27 +315,71 @@ void test_bf16_conv2d_layout() {
     }
 }
 
+void test_paired_scaled_conv2d() {
+    constexpr uint64_t channels = 33;
+    std::vector<uint8_t> memory(kUramSize, 0);
+    copy_to(memory, kABase, std::vector<uint8_t>(channels, 0x38));
+    copy_to(memory, kBBase, std::vector<uint8_t>(channels, 1));
+    copy_to(memory, kAScaleBase, {0x7f, 0x80});
+
+    RVTNG::conv_tcsr_t control{};
+    control.c = channels;
+    control.wi = 1;
+    control.hi = 1;
+    control.wo = 1;
+    control.ho = 1;
+    control.wk = 1;
+    control.hk = 1;
+    control.co = 1;
+    control.wiStride = 64;
+    control.hiStride = 64;
+    control.wkStride = 64;
+    control.hkStride = 64;
+    control.coStride = 64;
+    control.woStride = 32;
+    control.hoStride = 32;
+    control.scaleWiStride = 32;
+    control.scaleHiStride = 32;
+    control.scaleWkStride = 32;
+    control.scaleHkStride = 32;
+    control.scaleCoStride = 32;
+    control.dataType = paired_type(
+        RVT_MAT_TYPE_E4M3, RVT_MAT_TYPE_S8, true, false);
+    control.dilationW = 1;
+    control.dilationH = 1;
+    control.strideW = 1;
+    control.strideH = 1;
+
+    assert(RVTNG::execute_conv2d(
+        memory.data(), control, kABase, kBBase, kCBase,
+        kAScaleBase, kBScaleBase, false));
+    expect_close("paired scaled Conv2D", load<float>(memory, kCBase), 34.0f);
+}
+
 void test_scalar_decoders() {
     expect_close("FP16 smallest subnormal", FP16ToFP32(0x0001),
                  std::ldexp(1.0f, -24), 0.0f);
+    expect_close("FP8 E0M7 fraction", FP8ToFP32<0>(0x60), 0.75f, 0.0f);
+    expect_close("FP8 E0M7 minimum", FP8ToFP32<0>(0x01),
+                 std::ldexp(1.0f, -7), 0.0f);
+    expect_close("FP8 E1M6 subnormal", FP8ToFP32<1>(0x01),
+                 std::ldexp(1.0f, -5), 0.0f);
+    expect_close("FP8 E2M5 subnormal", FP8ToFP32<2>(0x01),
+                 std::ldexp(1.0f, -5), 0.0f);
+    expect_close("FP8 E3M4 subnormal", FP8ToFP32<3>(0x01),
+                 std::ldexp(1.0f, -6), 0.0f);
     expect_close("FP8 E4M3 subnormal", FP8ToFP32<4>(0x01),
                  std::ldexp(1.0f, -9), 0.0f);
     expect_close("FP8 E5M2 subnormal", FP8ToFP32<5>(0x01),
                  std::ldexp(1.0f, -16), 0.0f);
+    expect_close("FP8 E6M1 subnormal", FP8ToFP32<6>(0x01),
+                 std::ldexp(1.0f, -31), 0.0f);
+    expect_close("FP8 E6M1 maximum finite", FP8ToFP32<6>(0x7f),
+                 std::ldexp(3.0f, 31), 0.0f);
     expect_close("FP4 E2M1 maximum", FP4E2M1ToFP32(0x07), 6.0f, 0.0f);
     expect_close("FP4 E2M1 negative", FP4E2M1ToFP32(0x0d), -3.0f, 0.0f);
     assert(E8M0ToExponent(0x7f) == 0);
     assert(E8M0ToExponent(0x80) == 1);
-}
-
-void test_tf32() {
-    // 0x3f801001 is just above the halfway point between adjacent TF32
-    // values, so round-to-nearest-even produces 0x3f802000.
-    const float result = run_one(RVT_TYPE_TF32, 1,
-                                 pack_f32({0x3f801001u}),
-                                 pack_f32({0x3f800000u}));
-    const uint32_t resultBits = std::bit_cast<uint32_t>(result);
-    assert(resultBits == 0x3f802000u);
 }
 
 void test_bf16_and_fp16() {
@@ -351,6 +392,23 @@ void test_bf16_and_fp16() {
     expect_close("FP16", run_one(RVT_TYPE_FP16, 2, fp16A, fp16B), -3.0f);
 }
 
+void test_paired_16bit_formats() {
+    const uint16_t dataType = paired_type(
+        RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16);
+    expect_close("paired BF16 x FP16",
+                 run_one(dataType, 2,
+                         pack_u16({0x3fc0, 0xc000}),
+                         pack_u16({0x4000, 0x4200})),
+                 -3.0f);
+
+    // FP16 fraction bits [2:0] are discarded before the common FP32 kernel.
+    expect_close("FP16 low fraction truncation",
+                 run_one(paired_type(RVT_MAT_TYPE_FP16,
+                                     RVT_MAT_TYPE_BF16),
+                         1, pack_u16({0x3c07}), pack_u16({0x3f80})),
+                 1.0f);
+}
+
 void test_fp8() {
     expect_close("FP8 E4M3",
                  run_one(RVT_TYPE_FP8_E4M3, 2,
@@ -360,6 +418,60 @@ void test_fp8() {
                  run_one(RVT_TYPE_FP8_E5M2, 2,
                          {0x3e, 0xc0}, {0x40, 0x42}),
                  -3.0f);
+}
+
+void test_paired_8bit_formats() {
+    struct format_case_t {
+        uint8_t base;
+        uint8_t sample;
+        float value;
+        std::string_view name;
+    };
+    const format_case_t formats[] = {
+        {RVT_MAT_TYPE_E0M7, 0x60, 0.75f, "E0M7"},
+        {RVT_MAT_TYPE_E1M6, 0x30, 1.5f, "E1M6"},
+        {RVT_MAT_TYPE_E2M5, 0x30, 1.5f, "E2M5"},
+        {RVT_MAT_TYPE_E3M4, 0x38, 1.5f, "E3M4"},
+        {RVT_MAT_TYPE_E4M3, 0x3c, 1.5f, "E4M3"},
+        {RVT_MAT_TYPE_E5M2, 0x3e, 1.5f, "E5M2"},
+        {RVT_MAT_TYPE_E6M1, 0x3f, 1.5f, "E6M1"},
+    };
+    for(const format_case_t& format : formats) {
+        expect_close(format.name,
+                     run_one(paired_type(format.base, RVT_MAT_TYPE_S8),
+                             1, {format.sample}, {2}),
+                     2.0f * format.value);
+        expect_close(format.name,
+                     run_one(paired_type(RVT_MAT_TYPE_S8, format.base),
+                             1, {2}, {format.sample}),
+                     2.0f * format.value);
+
+        constexpr size_t k = 33;
+        expect_close(format.name,
+                     run_one(paired_type(format.base, RVT_MAT_TYPE_S8,
+                                         true, false),
+                             k, std::vector<uint8_t>(k, format.sample),
+                             std::vector<uint8_t>(k, 1), {0x7f, 0x80}),
+                     34.0f * format.value);
+        expect_close(format.name,
+                     run_one(paired_type(RVT_MAT_TYPE_S8, format.base,
+                                         false, true),
+                             k, std::vector<uint8_t>(k, 1),
+                             std::vector<uint8_t>(k, format.sample),
+                             {}, {0x7f, 0x80}),
+                     34.0f * format.value);
+    }
+
+    expect_close("paired E0M7 x E6M1",
+                 run_one(paired_type(RVT_MAT_TYPE_E0M7,
+                                     RVT_MAT_TYPE_E6M1),
+                         1, {0x60}, {0x3f}),
+                 1.125f);
+    expect_close("paired U8 x E5M2",
+                 run_one(paired_type(RVT_MAT_TYPE_U8,
+                                     RVT_MAT_TYPE_E5M2),
+                         2, {3, 4}, {0x40, 0xc0}),
+                 -2.0f);
 }
 
 void test_mxfp8() {
@@ -376,22 +488,27 @@ void test_mxfp8() {
     }
 }
 
+void test_independent_mx_operands() {
+    constexpr size_t k = 33;
+    const uint16_t dataType = paired_type(
+        RVT_MAT_TYPE_E4M3, RVT_MAT_TYPE_S8, true, false);
+    expect_close("paired one-sided MX scale",
+                 run_one(dataType, k,
+                         std::vector<uint8_t>(k, 0x38),
+                         std::vector<uint8_t>(k, 1),
+                         {0x7f, 0x80}),
+                 34.0f);
+}
+
 void test_int8_encodings() {
     const std::vector<uint8_t> a = {
         static_cast<uint8_t>(-3), static_cast<uint8_t>(4)};
     const std::vector<uint8_t> b = {
         static_cast<uint8_t>(5), static_cast<uint8_t>(-2)};
-    for (const uint64_t dataType : {
-             uint64_t{RVT_TYPE_RTL_S8}, uint64_t{RVT_TYPE_S8},
-             uint64_t{RVT_TYPE_COMPAT_S8}}) {
-        expect_close("INT8 encoding", run_one(dataType, 2, a, b), -23.0f);
-    }
-
-    for (const uint64_t dataType : {
-             uint64_t{RVT_TYPE_RTL_U8}, uint64_t{RVT_TYPE_U8},
-             uint64_t{RVT_TYPE_COMPAT_U8}}) {
-        expect_close("UINT8 encoding", run_one(dataType, 1, {250}, {2}), 500.0f);
-    }
+    expect_close("S8 legacy encoding",
+                 run_one(RVT_TYPE_S8, 2, a, b), -23.0f);
+    expect_close("U8 legacy encoding",
+                 run_one(RVT_TYPE_U8, 1, {250}, {2}), 500.0f);
 }
 
 void test_fp4_and_int4() {
@@ -405,6 +522,28 @@ void test_fp4_and_int4() {
                          pack_nibbles({0xd, 0x4}),
                          pack_nibbles({0x5, 0xe})),
                  -23.0f);
+    expect_close("U4 low/high nibble order",
+                 run_one(RVT_TYPE_U4, 2,
+                         pack_nibbles({0x3, 0x4}),
+                         pack_nibbles({0x5, 0x2})),
+                 23.0f);
+}
+
+void test_paired_4bit_formats() {
+    expect_close("paired E2M1 x U4",
+                 run_one(paired_type(RVT_MAT_TYPE_FP4_E2M1,
+                                     RVT_MAT_TYPE_U4),
+                         2,
+                         pack_nibbles({0x3, 0xc}),
+                         pack_nibbles({0x2, 0x3})),
+                 -3.0f);
+    expect_close("paired S4 x E2M1",
+                 run_one(paired_type(RVT_MAT_TYPE_S4,
+                                     RVT_MAT_TYPE_FP4_E2M1),
+                         2,
+                         pack_nibbles({0xd, 0x4}),
+                         pack_nibbles({0x4, 0x5})),
+                 6.0f);
 }
 
 void test_mxfp4_scale_layout() {
@@ -485,7 +624,7 @@ void test_layout_mma_and_k_blocking() {
 
     const std::vector<uint8_t> ones(129, 1);
     expect_close("K128 block accumulation",
-                 run_one(RVT_TYPE_RTL_S8, 129, ones, ones), 129.0f);
+                 run_one(RVT_TYPE_S8, 129, ones, ones), 129.0f);
 }
 
 void test_swizzled_addresses() {
@@ -523,9 +662,29 @@ void test_swizzled_addresses() {
 void test_unsupported_type() {
     std::vector<uint8_t> memory(kUramSize, 0);
     RVTNG::mat_tcsr_t control{};
-    control.dataType = 0xff;
-    assert(!RVTNG::execute_matmul(memory.data(), control,
-                                 kABase, kBBase, kCBase, 0, 0, false));
+    control.aStride = 32;
+    control.bStride = 32;
+    control.cStride = 32;
+    const auto rejected = [&](uint64_t dataType) {
+        control.dataType = dataType;
+        store(memory, kCBase, 123.0f);
+        assert(!RVTNG::execute_matmul(memory.data(), control,
+                                     kABase, kBBase, kCBase,
+                                     kAScaleBase, kBScaleBase, false));
+        expect_close("invalid datatype leaves C unchanged",
+                     load<float>(memory, kCBase), 123.0f);
+    };
+
+    rejected(0xff);
+    rejected(RVT_TYPE_FP32); // allocated legacy type, unsupported by NeoMat
+    rejected(RVT_TYPE_RTL_S8);
+    rejected(uint64_t{0x100} | RVT_TYPE_BF16);
+    rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_E4M3));
+    rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16) | 0x1000);
+    rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16,
+                         true, false));
+    rejected(paired_type(0x07u, RVT_MAT_TYPE_E4M3)); // E7M0 is reserved
+    rejected(paired_type(RVT_MAT_TYPE_TF16, RVT_MAT_TYPE_S8));
 }
 
 } // namespace
@@ -533,14 +692,18 @@ void test_unsupported_type() {
 int main() {
     test_instruction_decoder();
     test_scalar_decoders();
-    test_tf32();
     test_bf16_and_fp16();
+    test_paired_16bit_formats();
     test_bf16_conv2d();
     test_bf16_conv2d_layout();
+    test_paired_scaled_conv2d();
     test_fp8();
+    test_paired_8bit_formats();
     test_mxfp8();
+    test_independent_mx_operands();
     test_int8_encodings();
     test_fp4_and_int4();
+    test_paired_4bit_formats();
     test_mxfp4_scale_layout();
     test_layout_mma_and_k_blocking();
     test_swizzled_addresses();

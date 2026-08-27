@@ -87,7 +87,7 @@ bool run_fp32_lowp_compress(uint8_t op)
     inst_queue[pc++] = vec_inst_t{scalar_add_raw()};
     inst_queue[pc++] = vec_inst_t{regular_load_raw(), INPUT_ADDR};
     inst_queue[pc++] = vec_inst_t{convert_raw(op, 0)};
-    inst_queue[pc++] = vec_inst_t{shuffle_raw(0b110), 1};
+    inst_queue[pc++] = vec_inst_t{shuffle_raw(0b110), 0x00};
     inst_queue[pc++] = vec_inst_t{masked_store_raw(0), OUTPUT_ADDR};
 
     MPMCQueue<vec_vfork_req_t, 16> vfork_queue;
@@ -145,7 +145,7 @@ bool run_lowp_decompress_fp32(uint8_t op)
     std::array<vec_inst_t, VEC_INST_QUEUE_CAPACITY> inst_queue{};
     size_t pc = 0;
     inst_queue[pc++] = vec_inst_t{regular_load_raw(), INPUT_ADDR};
-    inst_queue[pc++] = vec_inst_t{shuffle_raw(0b110), 0x21};
+    inst_queue[pc++] = vec_inst_t{shuffle_raw(0b110), 0x20};
     inst_queue[pc++] = vec_inst_t{convert_raw(op, 0)};
     inst_queue[pc++] = vec_inst_t{regular_store_raw(), OUTPUT_ADDR};
 

@@ -285,24 +285,46 @@
 #define RVT_TYPE_MX_FP8_E5M2 0b000111
 #define RVT_TYPE_FP4_E2M1    0b001000
 #define RVT_TYPE_MX_FP4_E2M1 0b001001
-// Temporary encodings used by the current NeoMat RTL until the ISA table is
-// extended with 4-bit formats and the RTL moves to the architectural S8/U8
-// encodings below.
+// Reserved legacy aliases retained only so older source code still compiles.
+// NeoMat no longer accepts these values as valid MAT DataType encodings.
 #define RVT_TYPE_RTL_S8      0b001010
 #define RVT_TYPE_RTL_U8      0b001011
-#define RVT_TYPE_S4          0b001100
 #define RVT_TYPE_S32         0b010000
 #define RVT_TYPE_U32         0b010001
 #define RVT_TYPE_S16         0b010010
 #define RVT_TYPE_U16         0b010011
 #define RVT_TYPE_S8          0b010100
 #define RVT_TYPE_U8          0b010101
+#define RVT_TYPE_S4          0b011000
+#define RVT_TYPE_U4          0b011001
 
-// Deployed kernel headers also use the legacy 0x2x integer namespace. Matrix
-// execution accepts those values as compatibility aliases; new software should
-// use the ISA encodings above (or the temporary RTL values while they remain).
+// Reserved compatibility aliases.  They are not architectural MAT encodings.
 #define RVT_TYPE_COMPAT_S8   0b100100
 #define RVT_TYPE_COMPAT_U8   0b100101
+
+// MAT paired A/B DataType encoding (EXT=1, Version=0).
+#define RVT_MAT_TYPE_MX_BIT       0x20u
+#define RVT_MAT_TYPE_BASE_MASK    0x1fu
+#define RVT_MAT_TYPE_E0M7         0x00u
+#define RVT_MAT_TYPE_E1M6         0x01u
+#define RVT_MAT_TYPE_E2M5         0x02u
+#define RVT_MAT_TYPE_E3M4         0x03u
+#define RVT_MAT_TYPE_E4M3         0x04u
+#define RVT_MAT_TYPE_E5M2         0x05u
+#define RVT_MAT_TYPE_E6M1         0x06u
+#define RVT_MAT_TYPE_S8           0x08u
+#define RVT_MAT_TYPE_U8           0x09u
+#define RVT_MAT_TYPE_TF16         0x0au
+#define RVT_MAT_TYPE_TF32         0x10u
+#define RVT_MAT_TYPE_FP16         0x11u
+#define RVT_MAT_TYPE_BF16         0x12u
+#define RVT_MAT_TYPE_FP4_E2M1     0x18u
+#define RVT_MAT_TYPE_S4           0x19u
+#define RVT_MAT_TYPE_U4           0x1au
+#define RVT_MAT_OPERAND(base, mx) \
+    ((((base) & RVT_MAT_TYPE_BASE_MASK)) | ((mx) ? RVT_MAT_TYPE_MX_BIT : 0u))
+#define RVT_MAT_PAIRED_DATATYPE(a_type, b_type) \
+    (0x8000u | (((b_type) & 0x3fu) << 6) | ((a_type) & 0x3fu))
 
 //=============================================================================
 // Instruction Classification

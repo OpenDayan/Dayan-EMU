@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -188,27 +189,63 @@ struct FP8 {
 //     out.f *= exp_f2<127-FP8<E>::E_BIAS>();
 //     return out.f;
 // }
-template<int E>
-inline float FP8ToFP32(uint8_t r) {
-    static_assert(E == 4 || E == 5, "Only E4M3 and E5M2 FP8 are supported.");
-    constexpr int M = 7 - E;
-    constexpr int bias = (1 << (E - 1)) - 1;
-    constexpr uint8_t fraction_mask = (1u << M) - 1u;
-    constexpr uint8_t exponent_mask = (1u << E) - 1u;
+constexpr float FP8ScalePowerOfTwo(float value, int exponent) {
+    while(exponent > 0) {
+        value *= 2.0f;
+        --exponent;
+    }
+    while(exponent < 0) {
+        value *= 0.5f;
+        ++exponent;
+    }
+    return value;
+}
 
-    const int exponent = (r >> M) & exponent_mask;
-    const int fraction = r & fraction_mask;
-    float magnitude = 0.0f;
-    if (exponent == 0) {
-        // Subnormal: (fraction / 2^M) * 2^(1-bias).
-        magnitude = std::ldexp(static_cast<float>(fraction), 1 - bias - M);
+template<int E>
+constexpr float FP8ToFP32Scalar(uint8_t r) {
+    static_assert(E >= 0 && E <= 6,
+                  "FP8 exponent width must describe E0M7 through E6M1.");
+    constexpr int M = 7 - E;
+    constexpr uint8_t fractionMask = (1u << M) - 1u;
+    const int fraction = r & fractionMask;
+    float magnitude;
+
+    if constexpr(E == 0) {
+        // E0M7 has no exponent or hidden bit and is a sign-magnitude Q0.7
+        // value.  This also gives it the same exact FP14 fraction mapping as
+        // the other 8-bit-class formats.
+        magnitude = FP8ScalePowerOfTwo(static_cast<float>(fraction), -M);
     } else {
-        // NeoMat currently treats every non-zero exponent as a finite value;
-        // this mirrors its internal FP14 operand unpacking for all bit patterns.
-        magnitude = std::ldexp(static_cast<float>((1 << M) | fraction),
-                               exponent - bias - M);
+        constexpr int bias = (1 << (E - 1)) - 1;
+        constexpr uint8_t exponentMask = (1u << E) - 1u;
+        const int exponent = (r >> M) & exponentMask;
+        if(exponent == 0) {
+            // Subnormal: (fraction / 2^M) * 2^(1-bias).
+            magnitude = FP8ScalePowerOfTwo(
+                static_cast<float>(fraction), 1 - bias - M);
+        } else {
+            // NeoMat treats every non-zero exponent as finite; no exponent
+            // pattern is reserved for infinity or NaN in the MAT input path.
+            magnitude = FP8ScalePowerOfTwo(
+                static_cast<float>((1 << M) | fraction),
+                exponent - bias - M);
+        }
     }
     return (r & 0x80u) != 0 ? -magnitude : magnitude;
+}
+
+template<int E>
+inline float FP8ToFP32(uint8_t r) {
+    // A 1 KiB table per format replaces exponent decoding and scaling in the
+    // MAT hot loop.  All E0M7-E6M1 values are exactly representable in FP32.
+    static constexpr std::array<float, 256> decodeTable = [] {
+        std::array<float, 256> result{};
+        for(size_t raw = 0; raw < result.size(); ++raw) {
+            result[raw] = FP8ToFP32Scalar<E>(static_cast<uint8_t>(raw));
+        }
+        return result;
+    }();
+    return decodeTable[r];
 }
 
 static inline float FP4E2M1ToFP32(uint8_t value) {

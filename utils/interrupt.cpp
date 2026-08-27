@@ -7,7 +7,7 @@
 namespace RVTNG {
 namespace {
 
-constexpr std::array<std::string_view, 34> kInterruptSourceNames = {
+constexpr std::array<std::string_view, 35> kInterruptSourceNames = {
     "neomat_uram_a_read_range",
     "neomat_uram_a_read_align",
     "neomat_uram_b_read_range",
@@ -42,6 +42,7 @@ constexpr std::array<std::string_view, 34> kInterruptSourceNames = {
     "neovec_tcsr_access_error",
     "neovec_decode_error",
     "instruction_decode_error",
+    "neomat_datatype_error",
 };
 
 constexpr uint64_t kCountMask = (uint64_t{1} << 48) - 1;

@@ -1,4 +1,5 @@
 #include "vec.hpp"
+#include "vec_shuffle.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -82,15 +83,10 @@ bool run_case(bool dynamic, uint64_t amount)
 
     std::array<uint32_t, 64> output;
     std::memcpy(output.data(), uram.data() + OUTPUT_ADDR, sizeof(output));
-    const uint64_t ctrl = amount & 0x3f;
-    const size_t group_size = size_t{1} << (ctrl & 0x1f);
-    const size_t packed_lane_count = output.size() / group_size;
+    const auto expected = execute_vec_shuffle_compress(input, amount);
     for(size_t lane = 0; lane < output.size(); lane++) {
-        const size_t src_lane = (ctrl & 0x20) != 0
-            ? lane / group_size
-            : (lane % packed_lane_count) * group_size;
-        if(!check(output[lane] == input[src_lane],
-                  "decoded compress/decompress broadcast mapping")) {
+        if(!check(output[lane] == expected[lane],
+                  "decoded compress/decompress/scatter mapping")) {
             return false;
         }
     }
@@ -101,8 +97,9 @@ bool run_case(bool dynamic, uint64_t amount)
 
 int main()
 {
-    if(!run_case(false, 2) || !run_case(true, 4)
-       || !run_case(false, 0x21) || !run_case(true, 0x24)) {
+    if(!run_case(false, 0x00) || !run_case(true, 0x04)
+       || !run_case(false, 0x20) || !run_case(true, 0x24)
+       || !run_case(false, 0x25) || !run_case(true, 0x27)) {
         return 1;
     }
     std::cout << "vec_shuffle_execution_test passed\n";

@@ -97,6 +97,9 @@ void test_decoder_helpers()
     assert(RVTNG::interrupt_source_name(
         RVTNG::interrupt_source_t::instruction_decode_error) ==
         "instruction_decode_error");
+    assert(RVTNG::interrupt_source_name(
+        RVTNG::interrupt_source_t::neomat_datatype_error) ==
+        "neomat_datatype_error");
 }
 
 void test_queued_context_snapshot()

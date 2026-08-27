@@ -52,9 +52,11 @@ static_assert(offsetof(mat_tcsr_t, aScaleStride) == 19 * sizeof(uint64_t));
 static_assert(offsetof(mat_tcsr_t, bScaleStride) == 23 * sizeof(uint64_t));
 
 // Execute one architectural tx.mat.mm/tx.mat.mma operation synchronously.
-// A and B follow the MAT layout (A row-major, B column-major); C is always
-// FP32. The scale bases come from the most recent tx.mat.setptr for the group.
-// Returns false when DataType is unsupported.
+// A and B follow the MAT layout (A row-major, B column-major); C and the common
+// operator kernel are FP32. DataType may independently select A/B formats from
+// the same 4-bit, 8-bit, or 16-bit operation class. The scale bases come from
+// the most recent tx.mat.setptr for the group. Returns false for an invalid or
+// unsupported DataType without touching URAM.
 bool execute_matmul(
     uint8_t* uram,
     const mat_tcsr_t& tcsr,
@@ -108,7 +110,19 @@ bool execute_conv2d(
     uint64_t input,
     uint64_t kernel,
     uint64_t output,
+    uint64_t inputScale,
+    uint64_t kernelScale,
     bool acc);
+
+inline bool execute_conv2d(
+    uint8_t* uram,
+    const conv_tcsr_t& tcsr,
+    uint64_t input,
+    uint64_t kernel,
+    uint64_t output,
+    bool acc) {
+    return execute_conv2d(uram, tcsr, input, kernel, output, 0, 0, acc);
+}
 
 class mat_t: exec_unit_t {
 public:
@@ -135,7 +149,7 @@ protected:
     // padL,padU, dilationW,dilationH, strideW,strideH, strideDilationW,strideDilationH
     const char tcsr_width[32] = {
         20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
-        24, 24, 24, 8,
+        24, 24, 24, 16,
         20, 20, 20, 20, 20,
         8, 8, 8, 8, 8, 8, 20, 20
     };
@@ -155,7 +169,10 @@ protected:
                                   bool acc) const;
     bool validate_conv_accesses(const conv_tcsr_t& control,
                                 uint64_t input, uint64_t kernel,
-                                uint64_t output, bool acc) const;
+                                uint64_t output,
+                                uint64_t input_scale,
+                                uint64_t kernel_scale,
+                                bool acc) const;
 };
 
 }

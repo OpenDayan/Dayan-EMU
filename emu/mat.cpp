@@ -6,7 +6,6 @@
 #include "rvt_decoder.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -29,60 +28,6 @@ static uint64_t packed_row_bytes(uint64_t elements, unsigned bits_per_element) {
         : static_cast<uint64_t>(bytes);
 }
 
-enum class operand_kind_t {
-    tf32,
-    bf16,
-    fp16,
-    fp8_e4m3,
-    fp8_e5m2,
-    fp4_e2m1,
-    sint8,
-    uint8,
-    sint4,
-};
-
-struct mat_format_t {
-    operand_kind_t kind;
-    unsigned bitsPerElement;
-    bool usesScale;
-    const char* name;
-};
-
-static std::optional<mat_format_t> decode_mat_format(uint64_t dataType) {
-    switch (dataType) {
-    case RVT_TYPE_FP32:
-        return mat_format_t{operand_kind_t::tf32, 32, false, "TF32"};
-    case RVT_TYPE_BF16:
-        return mat_format_t{operand_kind_t::bf16, 16, false, "BF16"};
-    case RVT_TYPE_FP16:
-        return mat_format_t{operand_kind_t::fp16, 16, false, "FP16"};
-    case RVT_TYPE_FP8_E4M3:
-        return mat_format_t{operand_kind_t::fp8_e4m3, 8, false, "FP8-E4M3"};
-    case RVT_TYPE_FP8_E5M2:
-        return mat_format_t{operand_kind_t::fp8_e5m2, 8, false, "FP8-E5M2"};
-    case RVT_TYPE_MX_FP8_E4M3:
-        return mat_format_t{operand_kind_t::fp8_e4m3, 8, true, "MXFP8-E4M3"};
-    case RVT_TYPE_MX_FP8_E5M2:
-        return mat_format_t{operand_kind_t::fp8_e5m2, 8, true, "MXFP8-E5M2"};
-    case RVT_TYPE_FP4_E2M1:
-        return mat_format_t{operand_kind_t::fp4_e2m1, 4, false, "FP4-E2M1"};
-    case RVT_TYPE_MX_FP4_E2M1:
-        return mat_format_t{operand_kind_t::fp4_e2m1, 4, true, "MXFP4-E2M1"};
-    case RVT_TYPE_RTL_S8:
-    case RVT_TYPE_S8:
-    case RVT_TYPE_COMPAT_S8:
-        return mat_format_t{operand_kind_t::sint8, 8, false, "INT8"};
-    case RVT_TYPE_RTL_U8:
-    case RVT_TYPE_U8:
-    case RVT_TYPE_COMPAT_U8:
-        return mat_format_t{operand_kind_t::uint8, 8, false, "UINT8"};
-    case RVT_TYPE_S4:
-        return mat_format_t{operand_kind_t::sint4, 4, false, "INT4"};
-    default:
-        return std::nullopt;
-    }
-}
-
 template<typename T>
 static T load_uram(const uint8_t* uram, uint64_t logicalAddress, uint64_t swizzleMBS) {
     T value;
@@ -98,104 +43,286 @@ static void store_uram(uint8_t* uram, uint64_t logicalAddress, uint64_t swizzleM
     std::memcpy(uram + physicalAddress, &value, sizeof(value));
 }
 
+enum class mat_operation_class_t : uint8_t {
+    bits4,
+    bits8,
+    bits16,
+};
+
+using mat_convert_fn_t = float (*)(
+    const uint8_t* uram, uint64_t rowBase, uint64_t index,
+    uint64_t swizzleMBS);
+
+struct mat_operand_format_t {
+    mat_convert_fn_t convert;
+    mat_operation_class_t operationClass;
+    unsigned bitsPerElement;
+    bool usesScale;
+    const char* name;
+};
+
+struct mat_format_pair_t {
+    mat_operand_format_t a;
+    mat_operand_format_t b;
+};
+
 static uint64_t element_byte_offset(uint64_t index, unsigned bitsPerElement) {
     return bitsPerElement == 4 ? index / 2 : index * (bitsPerElement / 8);
 }
 
-static float decode_operand(const uint8_t* uram, uint64_t rowBase, uint64_t index,
-                            uint64_t swizzleMBS, const mat_format_t& format) {
-    const uint64_t address = rowBase + element_byte_offset(index, format.bitsPerElement);
-    switch (format.kind) {
-    case operand_kind_t::tf32:
-        return TF32Clip(load_uram<float>(uram, address, swizzleMBS));
-    case operand_kind_t::bf16:
-        return BF16ToFP32(load_uram<uint16_t>(uram, address, swizzleMBS));
-    case operand_kind_t::fp16:
-        return FP16ToFP32(load_uram<uint16_t>(uram, address, swizzleMBS));
-    case operand_kind_t::fp8_e4m3:
-        return FP8ToFP32<4>(load_uram<uint8_t>(uram, address, swizzleMBS));
-    case operand_kind_t::fp8_e5m2:
-        return FP8ToFP32<5>(load_uram<uint8_t>(uram, address, swizzleMBS));
-    case operand_kind_t::fp4_e2m1: {
-        const uint8_t packed = load_uram<uint8_t>(uram, address, swizzleMBS);
-        const uint8_t value = (index & 1) == 0 ? packed & 0x0fu : packed >> 4;
-        return FP4E2M1ToFP32(value);
-    }
-    case operand_kind_t::sint8: {
-        const int raw = load_uram<uint8_t>(uram, address, swizzleMBS);
-        return static_cast<float>(raw < 0x80 ? raw : raw - 0x100);
-    }
-    case operand_kind_t::uint8:
-        return static_cast<float>(load_uram<uint8_t>(uram, address, swizzleMBS));
-    case operand_kind_t::sint4: {
-        const uint8_t packed = load_uram<uint8_t>(uram, address, swizzleMBS);
-        const int raw = (index & 1) == 0 ? packed & 0x0f : packed >> 4;
-        return static_cast<float>(raw < 8 ? raw : raw - 16);
-    }
-    }
-    return 0.0f;
+static uint8_t load_nibble(const uint8_t* uram, uint64_t rowBase,
+                           uint64_t index, uint64_t swizzleMBS) {
+    const uint64_t address = rowBase + element_byte_offset(index, 4);
+    const uint8_t packed = load_uram<uint8_t>(uram, address, swizzleMBS);
+    return (index & 1) == 0 ? packed & 0x0fu : packed >> 4;
 }
 
-static void fetch_row(
+static float convert_bf16(const uint8_t* uram, uint64_t rowBase,
+                          uint64_t index, uint64_t swizzleMBS) {
+    return BF16ToFP32(load_uram<uint16_t>(
+        uram, rowBase + index * sizeof(uint16_t), swizzleMBS));
+}
+
+static float convert_fp16(const uint8_t* uram, uint64_t rowBase,
+                          uint64_t index, uint64_t swizzleMBS) {
+    const uint16_t raw = load_uram<uint16_t>(
+        uram, rowBase + index * sizeof(uint16_t), swizzleMBS);
+    // The 16-bit MAT class enters the TF32 path after dropping the lowest
+    // three FP16 fraction bits.
+    return FP16ToFP32(raw & 0xfff8u);
+}
+
+template<int E>
+static float convert_fp8(const uint8_t* uram, uint64_t rowBase,
+                         uint64_t index, uint64_t swizzleMBS) {
+    return FP8ToFP32<E>(load_uram<uint8_t>(
+        uram, rowBase + index, swizzleMBS));
+}
+
+static float convert_sint8(const uint8_t* uram, uint64_t rowBase,
+                           uint64_t index, uint64_t swizzleMBS) {
+    const int raw = load_uram<uint8_t>(uram, rowBase + index, swizzleMBS);
+    return static_cast<float>(raw < 0x80 ? raw : raw - 0x100);
+}
+
+static float convert_uint8(const uint8_t* uram, uint64_t rowBase,
+                           uint64_t index, uint64_t swizzleMBS) {
+    return static_cast<float>(load_uram<uint8_t>(
+        uram, rowBase + index, swizzleMBS));
+}
+
+static float convert_fp4_e2m1(const uint8_t* uram, uint64_t rowBase,
+                              uint64_t index, uint64_t swizzleMBS) {
+    return FP4E2M1ToFP32(load_nibble(
+        uram, rowBase, index, swizzleMBS));
+}
+
+static float convert_sint4(const uint8_t* uram, uint64_t rowBase,
+                           uint64_t index, uint64_t swizzleMBS) {
+    const int raw = load_nibble(uram, rowBase, index, swizzleMBS);
+    return static_cast<float>(raw < 8 ? raw : raw - 16);
+}
+
+static float convert_uint4(const uint8_t* uram, uint64_t rowBase,
+                           uint64_t index, uint64_t swizzleMBS) {
+    return static_cast<float>(load_nibble(
+        uram, rowBase, index, swizzleMBS));
+}
+
+static std::optional<mat_operand_format_t> decode_operand_format(
+    uint8_t operandType) {
+    const uint8_t base = operandType & RVT_MAT_TYPE_BASE_MASK;
+    const bool usesScale = (operandType & RVT_MAT_TYPE_MX_BIT) != 0;
+    const mat_operation_class_t operationClass = (base & 0x10u) == 0
+        ? mat_operation_class_t::bits8
+        : ((base & 0x18u) == 0x10u
+            ? mat_operation_class_t::bits16
+            : mat_operation_class_t::bits4);
+    if(operationClass == mat_operation_class_t::bits16 && usesScale) {
+        return std::nullopt;
+    }
+
+    switch(base) {
+    case RVT_MAT_TYPE_E0M7:
+        return mat_operand_format_t{
+            convert_fp8<0>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E0M7" : "FP8-E0M7"};
+    case RVT_MAT_TYPE_E1M6:
+        return mat_operand_format_t{
+            convert_fp8<1>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E1M6" : "FP8-E1M6"};
+    case RVT_MAT_TYPE_E2M5:
+        return mat_operand_format_t{
+            convert_fp8<2>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E2M5" : "FP8-E2M5"};
+    case RVT_MAT_TYPE_E3M4:
+        return mat_operand_format_t{
+            convert_fp8<3>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E3M4" : "FP8-E3M4"};
+    case RVT_MAT_TYPE_E4M3:
+        return mat_operand_format_t{
+            convert_fp8<4>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E4M3" : "FP8-E4M3"};
+    case RVT_MAT_TYPE_E5M2:
+        return mat_operand_format_t{
+            convert_fp8<5>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E5M2" : "FP8-E5M2"};
+    case RVT_MAT_TYPE_E6M1:
+        return mat_operand_format_t{
+            convert_fp8<6>, operationClass, 8, usesScale,
+            usesScale ? "MXFP8-E6M1" : "FP8-E6M1"};
+    case RVT_MAT_TYPE_S8:
+        return mat_operand_format_t{
+            convert_sint8, operationClass, 8, usesScale,
+            usesScale ? "MXS8" : "S8"};
+    case RVT_MAT_TYPE_U8:
+        return mat_operand_format_t{
+            convert_uint8, operationClass, 8, usesScale,
+            usesScale ? "MXU8" : "U8"};
+    case RVT_MAT_TYPE_FP16:
+        return mat_operand_format_t{
+            convert_fp16, operationClass, 16, false, "FP16"};
+    case RVT_MAT_TYPE_BF16:
+        return mat_operand_format_t{
+            convert_bf16, operationClass, 16, false, "BF16"};
+    case RVT_MAT_TYPE_FP4_E2M1:
+        return mat_operand_format_t{
+            convert_fp4_e2m1, operationClass, 4, usesScale,
+            usesScale ? "MXFP4-E2M1" : "FP4-E2M1"};
+    case RVT_MAT_TYPE_S4:
+        return mat_operand_format_t{
+            convert_sint4, operationClass, 4, usesScale,
+            usesScale ? "MXS4" : "S4"};
+    case RVT_MAT_TYPE_U4:
+        return mat_operand_format_t{
+            convert_uint4, operationClass, 4, usesScale,
+            usesScale ? "MXU4" : "U4"};
+    default:
+        // TF16 and TF32 are architecturally allocated, but their external
+        // storage/container conversion paths are not implemented here yet.
+        return std::nullopt;
+    }
+}
+
+static std::optional<uint8_t> decode_legacy_operand(uint8_t dataType) {
+    switch(dataType) {
+    case RVT_TYPE_BF16:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_BF16, false);
+    case RVT_TYPE_FP16:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_FP16, false);
+    case RVT_TYPE_FP8_E4M3:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E4M3, false);
+    case RVT_TYPE_FP8_E5M2:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E5M2, false);
+    case RVT_TYPE_MX_FP8_E4M3:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E4M3, true);
+    case RVT_TYPE_MX_FP8_E5M2:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E5M2, true);
+    case RVT_TYPE_FP4_E2M1:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_FP4_E2M1, false);
+    case RVT_TYPE_MX_FP4_E2M1:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_FP4_E2M1, true);
+    case RVT_TYPE_S8:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_S8, false);
+    case RVT_TYPE_U8:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_U8, false);
+    case RVT_TYPE_S4:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_S4, false);
+    case RVT_TYPE_U4:
+        return RVT_MAT_OPERAND(RVT_MAT_TYPE_U4, false);
+    default:
+        return std::nullopt;
+    }
+}
+
+static std::optional<mat_format_pair_t> decode_mat_formats(
+    uint64_t dataType) {
+    if((dataType & ~uint64_t{0xffff}) != 0) {
+        return std::nullopt;
+    }
+    const uint16_t encoded = static_cast<uint16_t>(dataType);
+    uint8_t aType = 0;
+    uint8_t bType = 0;
+    if((encoded & 0x8000u) == 0) {
+        if((encoded & 0x7f00u) != 0) {
+            return std::nullopt;
+        }
+        const auto operand = decode_legacy_operand(encoded & 0xffu);
+        if(!operand) {
+            return std::nullopt;
+        }
+        aType = *operand;
+        bType = *operand;
+    } else {
+        if(((encoded >> 12) & 0x7u) != 0) {
+            return std::nullopt;
+        }
+        aType = encoded & 0x3fu;
+        bType = (encoded >> 6) & 0x3fu;
+    }
+
+    const auto a = decode_operand_format(aType);
+    const auto b = decode_operand_format(bType);
+    if(!a || !b || a->operationClass != b->operationClass) {
+        return std::nullopt;
+    }
+    return mat_format_pair_t{*a, *b};
+}
+
+static void decode_row(
     const uint8_t* uram,
     uint64_t rowBase,
     uint64_t swizzleMBS,
     uint64_t firstK,
     uint64_t count,
-    const mat_format_t& format,
-    uint64_t scaleBase,
-    uint64_t scaleStride,
-    uint64_t majorIndex,
-    std::array<float, kMatmulBlockK>& values,
-    std::array<int, kMatmulBlockK>& scaleExponents) {
+    const mat_operand_format_t& format,
+    uint64_t scaleRowBase,
+    float* values) {
+    const mat_convert_fn_t convert = format.convert;
+    if(!format.usesScale) {
+        for(uint64_t subK = 0; subK < count; ++subK) {
+            values[subK] = convert(
+                uram, rowBase, firstK + subK, swizzleMBS);
+        }
+        return;
+    }
+
     uint64_t cachedScaleGroup = std::numeric_limits<uint64_t>::max();
     int cachedScaleExponent = 0;
-    const uint64_t scaleRowBase = scaleBase + majorIndex * scaleStride;
-
-    for (uint64_t subK = 0; subK < kMatmulBlockK; ++subK) {
-        if (subK >= count) {
-            values[subK] = 0.0f;
-            scaleExponents[subK] = 0;
-            continue;
-        }
-
+    for(uint64_t subK = 0; subK < count; ++subK) {
         const uint64_t logicalK = firstK + subK;
-        values[subK] = decode_operand(uram, rowBase, logicalK, swizzleMBS, format);
-        if (!format.usesScale) {
-            scaleExponents[subK] = 0;
-            continue;
-        }
-
+        float value = convert(
+            uram, rowBase, logicalK, swizzleMBS);
         const uint64_t scaleGroup = logicalK / kMXScaleGroupK;
-        if (scaleGroup != cachedScaleGroup) {
-            const uint8_t rawScale = load_uram<uint8_t>(uram, scaleRowBase + scaleGroup, 0);
+        if(scaleGroup != cachedScaleGroup) {
+            const uint8_t rawScale = load_uram<uint8_t>(
+                uram, scaleRowBase + scaleGroup, 0);
             cachedScaleExponent = E8M0ToExponent(rawScale);
             cachedScaleGroup = scaleGroup;
         }
-        scaleExponents[subK] = cachedScaleExponent;
+        values[subK] = std::ldexp(value, cachedScaleExponent);
     }
 }
 
-static float dot_product(
-    float sum,
-    const std::array<float, kMatmulBlockK>& a,
-    const std::array<float, kMatmulBlockK>& b,
-    const std::array<int, kMatmulBlockK>& aScale,
-    const std::array<int, kMatmulBlockK>& bScale,
+static void decode_matrix_block(
+    const uint8_t* uram,
+    uint64_t base,
+    uint64_t rows,
+    uint64_t rowStride,
+    uint64_t swizzleMBS,
+    uint64_t firstK,
     uint64_t count,
-    bool scaled) {
-    if (!scaled) {
-        #pragma GCC ivdep
-        for (uint64_t i = 0; i < count; ++i) {
-            sum += a[i] * b[i];
-        }
-        return sum;
+    const mat_operand_format_t& format,
+    uint64_t scaleBase,
+    uint64_t scaleStride,
+    std::vector<float>& values) {
+    values.resize(rows * kMatmulBlockK);
+    for(uint64_t row = 0; row < rows; ++row) {
+        decode_row(
+            uram, base + row * rowStride, swizzleMBS, firstK, count,
+            format, scaleBase + row * scaleStride,
+            values.data() + row * kMatmulBlockK);
     }
-
-    for (uint64_t i = 0; i < count; ++i) {
-        sum += std::ldexp(a[i] * b[i], aScale[i] + bScale[i]);
-    }
-    return sum;
 }
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -217,15 +344,17 @@ static std::vector<float> decode_conv_input(
     const uint8_t* uram,
     const conv_tcsr_t& tcsr,
     uint64_t input,
-    const mat_format_t& format) {
+    const mat_operand_format_t& format,
+    uint64_t scaleBase) {
     std::vector<float> values(tcsr.hi * tcsr.wi * tcsr.c);
     for (uint64_t hi = 0; hi < tcsr.hi; ++hi) {
         for (uint64_t wi = 0; wi < tcsr.wi; ++wi) {
             const uint64_t source = input + hi * tcsr.hiStride + wi * tcsr.wiStride;
             float* destination = values.data() + (hi * tcsr.wi + wi) * tcsr.c;
-            for (uint64_t ci = 0; ci < tcsr.c; ++ci) {
-                destination[ci] = decode_operand(uram, source, ci, tcsr.iSwizzleMBS, format);
-            }
+            const uint64_t scaleRow = scaleBase +
+                hi * tcsr.scaleHiStride + wi * tcsr.scaleWiStride;
+            decode_row(uram, source, tcsr.iSwizzleMBS, 0, tcsr.c,
+                       format, scaleRow, destination);
         }
     }
     return values;
@@ -235,16 +364,19 @@ static std::vector<float> decode_conv_kernel(
     const uint8_t* uram,
     const conv_tcsr_t& tcsr,
     uint64_t kernel,
-    const mat_format_t& format) {
+    const mat_operand_format_t& format,
+    uint64_t scaleBase) {
     std::vector<float> values(tcsr.hk * tcsr.wk * tcsr.co * tcsr.c);
     for (uint64_t hk = 0; hk < tcsr.hk; ++hk) {
         for (uint64_t wk = 0; wk < tcsr.wk; ++wk) {
             for (uint64_t co = 0; co < tcsr.co; ++co) {
                 const uint64_t source = kernel + hk * tcsr.hkStride + wk * tcsr.wkStride + co * tcsr.coStride;
                 float* destination = values.data() + ((hk * tcsr.wk + wk) * tcsr.co + co) * tcsr.c;
-                for (uint64_t ci = 0; ci < tcsr.c; ++ci) {
-                    destination[ci] = decode_operand(uram, source, ci, tcsr.kSwizzleMBS, format);
-                }
+                const uint64_t scaleRow = scaleBase +
+                    hk * tcsr.scaleHkStride + wk * tcsr.scaleWkStride +
+                    co * tcsr.scaleCoStride;
+                decode_row(uram, source, tcsr.kSwizzleMBS, 0, tcsr.c,
+                           format, scaleRow, destination);
             }
         }
     }
@@ -262,46 +394,65 @@ bool execute_matmul(
     uint64_t aScale,
     uint64_t bScale,
     bool acc) {
-    const auto format = decode_mat_format(tcsr.dataType);
-    if (!format.has_value()) {
+    const auto formats = decode_mat_formats(tcsr.dataType);
+    if(!formats) {
         return false;
     }
 
     const uint64_t M = tcsr.m + 1;
     const uint64_t N = tcsr.n + 1;
     const uint64_t K = tcsr.k + 1;
-    debugf("MAT: Calculating %s M%lu N%lu K%lu\n", format->name, M, N, K);
+    debugf("MAT: Calculating A=%s B=%s M%lu N%lu K%lu\n",
+           formats->a.name, formats->b.name, M, N, K);
 
-    std::array<float, kMatmulBlockK> aValues;
-    std::array<float, kMatmulBlockK> bValues;
-    std::array<int, kMatmulBlockK> aScaleExponents;
-    std::array<int, kMatmulBlockK> bScaleExponents;
+    // Resolve A/B converter function pointers once, convert each K block once,
+    // and reuse one contiguous FP32 dot-product kernel for every format pair.
+    std::vector<float> aValues;
+    std::vector<float> bValues;
+    std::vector<float> cValues(M * N, 0.0f);
+    if(acc) {
+        for(uint64_t m = 0; m < M; ++m) {
+            for(uint64_t n = 0; n < N; ++n) {
+                const uint64_t cAddress =
+                    c + m * tcsr.cStride + n * sizeof(float);
+                cValues[m * N + n] = load_uram<float>(
+                    uram, cAddress, tcsr.cSwizzleMBS);
+            }
+        }
+    }
 
     for (uint64_t k = 0; k < K; k += kMatmulBlockK) {
         const uint64_t count = std::min(kMatmulBlockK, K - k);
-        for (uint64_t m = 0; m < M; ++m) {
-            fetch_row(uram, a + m * tcsr.aStride, tcsr.aSwizzleMBS, k, count,
-                      *format, aScale, tcsr.aScaleStride, m,
-                      aValues, aScaleExponents);
-            for (uint64_t n = 0; n < N; ++n) {
-                fetch_row(uram, b + n * tcsr.bStride, tcsr.bSwizzleMBS, k, count,
-                          *format, bScale, tcsr.bScaleStride, n,
-                          bValues, bScaleExponents);
+        decode_matrix_block(
+            uram, a, M, tcsr.aStride, tcsr.aSwizzleMBS, k, count,
+            formats->a, aScale, tcsr.aScaleStride, aValues);
+        decode_matrix_block(
+            uram, b, N, tcsr.bStride, tcsr.bSwizzleMBS, k, count,
+            formats->b, bScale, tcsr.bScaleStride, bValues);
 
-                const uint64_t cAddress = c + m * tcsr.cStride + n * sizeof(float);
-                float sum = (acc || k != 0)
-                    ? load_uram<float>(uram, cAddress, tcsr.cSwizzleMBS)
-                    : 0.0f;
+        for (uint64_t m = 0; m < M; ++m) {
+            const float* aRow =
+                aValues.data() + m * kMatmulBlockK;
+            for (uint64_t n = 0; n < N; ++n) {
+                float& sum = cValues[m * N + n];
                 if (std::isnan(sum)) {
                     debugf("[ERROR] MAT: Encountered NaN in C input.\n");
                 }
-                sum = dot_product(sum, aValues, bValues, aScaleExponents,
-                                  bScaleExponents, count, format->usesScale);
+                const float* bRow =
+                    bValues.data() + n * kMatmulBlockK;
+                sum = dot_product_contiguous(sum, aRow, bRow, count);
                 if (std::isnan(sum) || std::fabs(sum) >= 1e20f) {
                     debugf("[ERROR] MAT: Encountered NaN or a large result.\n");
                 }
-                store_uram<float>(uram, cAddress, tcsr.cSwizzleMBS, sum);
             }
+        }
+    }
+    for(uint64_t m = 0; m < M; ++m) {
+        for(uint64_t n = 0; n < N; ++n) {
+            const uint64_t cAddress =
+                c + m * tcsr.cStride + n * sizeof(float);
+            store_uram<float>(uram, cAddress, tcsr.cSwizzleMBS,
+                              cValues[m * N + n]);
         }
     }
     debugf("MAT: 0x%08lx = 0x%08lx @ 0x%08lx\n", c, a, b);
@@ -314,16 +465,21 @@ bool execute_conv2d(
     uint64_t input,
     uint64_t kernel,
     uint64_t output,
+    uint64_t inputScale,
+    uint64_t kernelScale,
     bool acc) {
-    const auto format = decode_mat_format(tcsr.dataType);
-    if (!format.has_value() || format->usesScale) {
+    const auto formats = decode_mat_formats(tcsr.dataType);
+    if(!formats) {
         return false;
     }
 
-    debugf("MAT: Calculating %s Conv Hi%lu Wi%lu Ci%lu Hk%lu Wk%lu Ho%lu Wo%lu Co%lu\n",
-           format->name, tcsr.hi, tcsr.wi, tcsr.c, tcsr.hk, tcsr.wk, tcsr.ho, tcsr.wo, tcsr.co);
-    const std::vector<float> inputValues = decode_conv_input(uram, tcsr, input, *format);
-    const std::vector<float> kernelValues = decode_conv_kernel(uram, tcsr, kernel, *format);
+    debugf("MAT: Calculating A=%s B=%s Conv Hi%lu Wi%lu Ci%lu Hk%lu Wk%lu Ho%lu Wo%lu Co%lu\n",
+           formats->a.name, formats->b.name, tcsr.hi, tcsr.wi, tcsr.c,
+           tcsr.hk, tcsr.wk, tcsr.ho, tcsr.wo, tcsr.co);
+    const std::vector<float> inputValues = decode_conv_input(
+        uram, tcsr, input, formats->a, inputScale);
+    const std::vector<float> kernelValues = decode_conv_kernel(
+        uram, tcsr, kernel, formats->b, kernelScale);
     for (uint64_t ho = 0; ho < tcsr.ho; ++ho) {
         for (uint64_t wo = 0; wo < tcsr.wo; ++wo) {
             for (uint64_t co = 0; co < tcsr.co; ++co) {
@@ -423,14 +579,17 @@ bool mat_t::validate_matmul_accesses(const mat_tcsr_t& control,
                                      uint64_t a, uint64_t b, uint64_t c,
                                      uint64_t a_scale, uint64_t b_scale,
                                      bool acc) const {
-    const auto format = decode_mat_format(control.dataType);
-    if(!format) {
+    const auto formats = decode_mat_formats(control.dataType);
+    if(!formats) {
         return true;
     }
     const uint64_t m = control.m + 1;
     const uint64_t n = control.n + 1;
     const uint64_t k = control.k + 1;
-    const uint64_t input_row = packed_row_bytes(k, format->bitsPerElement);
+    const uint64_t aRowBytes = packed_row_bytes(
+        k, formats->a.bitsPerElement);
+    const uint64_t bRowBytes = packed_row_bytes(
+        k, formats->b.bitsPerElement);
     const auto checkRows = [this](
         uint64_t base, uint64_t rows, uint64_t stride, uint64_t rowBytes,
         uint64_t swizzle, interrupt_source_t rangeSource,
@@ -450,24 +609,27 @@ bool mat_t::validate_matmul_accesses(const mat_tcsr_t& control,
         return true;
     };
 
-    if(!checkRows(a, m, control.aStride, input_row, control.aSwizzleMBS,
+    if(!checkRows(a, m, control.aStride, aRowBytes, control.aSwizzleMBS,
                   interrupt_source_t::neomat_uram_a_read_range,
                   interrupt_source_t::neomat_uram_a_read_align) ||
-       !checkRows(b, n, control.bStride, input_row, control.bSwizzleMBS,
+       !checkRows(b, n, control.bStride, bRowBytes, control.bSwizzleMBS,
                   interrupt_source_t::neomat_uram_b_read_range,
                   interrupt_source_t::neomat_uram_b_read_align)) {
         return false;
     }
-    if(format->usesScale) {
-        const uint64_t scale_row = (k + kMXScaleGroupK - 1) / kMXScaleGroupK;
-        if(!checkRows(a_scale, m, control.aScaleStride, scale_row, 0,
-                      interrupt_source_t::neomat_uram_scale_read_range,
-                      interrupt_source_t::neomat_uram_scale_read_align) ||
-           !checkRows(b_scale, n, control.bScaleStride, scale_row, 0,
-                      interrupt_source_t::neomat_uram_scale_read_range,
-                      interrupt_source_t::neomat_uram_scale_read_align)) {
-            return false;
-        }
+    const uint64_t scaleRow =
+        (k + kMXScaleGroupK - 1) / kMXScaleGroupK;
+    if(formats->a.usesScale &&
+       !checkRows(a_scale, m, control.aScaleStride, scaleRow, 0,
+                  interrupt_source_t::neomat_uram_scale_read_range,
+                  interrupt_source_t::neomat_uram_scale_read_align)) {
+        return false;
+    }
+    if(formats->b.usesScale &&
+       !checkRows(b_scale, n, control.bScaleStride, scaleRow, 0,
+                  interrupt_source_t::neomat_uram_scale_read_range,
+                  interrupt_source_t::neomat_uram_scale_read_align)) {
+        return false;
     }
     if(acc && !checkRows(c, m, control.cStride, n * sizeof(float),
                          control.cSwizzleMBS,
@@ -483,13 +645,18 @@ bool mat_t::validate_matmul_accesses(const mat_tcsr_t& control,
 
 bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
                                    uint64_t input, uint64_t kernel,
-                                   uint64_t output, bool acc) const {
-    const auto format = decode_mat_format(control.dataType);
-    if(!format) {
+                                   uint64_t output,
+                                   uint64_t input_scale,
+                                   uint64_t kernel_scale,
+                                   bool acc) const {
+    const auto formats = decode_mat_formats(control.dataType);
+    if(!formats) {
         return true;
     }
-    const uint64_t input_tail = packed_row_bytes(control.c,
-                                                 format->bitsPerElement);
+    const uint64_t inputTail = packed_row_bytes(
+        control.c, formats->a.bitsPerElement);
+    const uint64_t kernelTail = packed_row_bytes(
+        control.c, formats->b.bitsPerElement);
     const auto checkRegions = [this](
         uint64_t base,
         uint64_t count0, uint64_t stride0,
@@ -523,16 +690,37 @@ bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
                      control.hi, control.hiStride,
                      control.wi, control.wiStride,
                      1, 0,
-                     input_tail, control.iSwizzleMBS,
+                     inputTail, control.iSwizzleMBS,
                      interrupt_source_t::neomat_uram_a_read_range,
                      interrupt_source_t::neomat_uram_a_read_align) ||
        !checkRegions(kernel,
                      control.hk, control.hkStride,
                      control.wk, control.wkStride,
                      control.co, control.coStride,
-                     input_tail, control.kSwizzleMBS,
+                     kernelTail, control.kSwizzleMBS,
                      interrupt_source_t::neomat_uram_b_read_range,
                      interrupt_source_t::neomat_uram_b_read_align)) {
+        return false;
+    }
+    const uint64_t scaleTail =
+        (control.c + kMXScaleGroupK - 1) / kMXScaleGroupK;
+    if(formats->a.usesScale &&
+       !checkRegions(input_scale,
+                     control.hi, control.scaleHiStride,
+                     control.wi, control.scaleWiStride,
+                     1, 0, scaleTail, 0,
+                     interrupt_source_t::neomat_uram_scale_read_range,
+                     interrupt_source_t::neomat_uram_scale_read_align)) {
+        return false;
+    }
+    if(formats->b.usesScale &&
+       !checkRegions(kernel_scale,
+                     control.hk, control.scaleHkStride,
+                     control.wk, control.scaleWkStride,
+                     control.co, control.scaleCoStride,
+                     scaleTail, 0,
+                     interrupt_source_t::neomat_uram_scale_read_range,
+                     interrupt_source_t::neomat_uram_scale_read_align)) {
         return false;
     }
     if(acc && !checkRegions(output,
@@ -678,16 +866,34 @@ void mat_t::execute(void) {
         const uint64_t b = inst.rs2 & kUramAddressMask;
         const uint64_t c = inst.rd & kUramAddressMask;
         debugf("MAT: DST(0x%08lx) <- A(0x%08lx) x B(0x%08lx)\n", c, a, b);
+        const mat_tcsr_t& selected = physicalGroup
+            ? tcsr[*physicalGroup] : emptyTcsr;
+        const uint64_t selectedAScale = physicalGroup
+            ? aScaleBase[*physicalGroup] : 0;
+        const uint64_t selectedBScale = physicalGroup
+            ? bScaleBase[*physicalGroup] : 0;
+        if(!decode_mat_formats(selected.dataType)) {
+            if(interrupts) {
+                interrupts->raise(
+                    interrupt_source_t::neomat_datatype_error,
+                    static_cast<uint32_t>(selected.dataType));
+            }
+            debugf("MAT: invalid DataType 0x%04lx; completing as no-op.\n",
+                   selected.dataType);
+            continue;
+        }
+
         if (IS_RVT_MAT_CONV2D(inst.inst) || IS_RVT_MAT_CONV2DA(inst.inst)) {
             conv_tcsr_t convTcsr;
-            const mat_tcsr_t& selected = physicalGroup
-                ? tcsr[*physicalGroup] : emptyTcsr;
             std::memcpy(&convTcsr, &selected, sizeof(convTcsr));
             if(!validate_conv_accesses(convTcsr, a, b, c,
+                                       selectedAScale, selectedBScale,
                                        IS_RVT_MAT_CONV2DA(inst.inst))) {
                 continue;
             }
-            if (!execute_conv2d(uram, convTcsr, a, b, c, IS_RVT_MAT_CONV2DA(inst.inst))) {
+            if (!execute_conv2d(uram, convTcsr, a, b, c,
+                                selectedAScale, selectedBScale,
+                                IS_RVT_MAT_CONV2DA(inst.inst))) {
                 debugf("MAT: unsupported Conv DataType 0x%02lx.\n", convTcsr.dataType);
             }
             continue;
@@ -697,12 +903,6 @@ void mat_t::execute(void) {
                    static_cast<unsigned long long>(RVT_MAT_MODE(inst.inst)));
             continue;
         }
-        const mat_tcsr_t& selected = physicalGroup
-            ? tcsr[*physicalGroup] : emptyTcsr;
-        const uint64_t selectedAScale = physicalGroup
-            ? aScaleBase[*physicalGroup] : 0;
-        const uint64_t selectedBScale = physicalGroup
-            ? bScaleBase[*physicalGroup] : 0;
         if(!validate_matmul_accesses(selected, a, b, c,
                                     selectedAScale, selectedBScale,
                                     RVT_MAT_ACC(inst.inst) != 0)) {

@@ -45,6 +45,7 @@ enum class interrupt_source_t : uint16_t {
     neovec_tcsr_access_error = 31,
     neovec_decode_error = 32,
     instruction_decode_error = 33,
+    neomat_datatype_error = 34,
 };
 
 constexpr uint8_t INTERRUPT_TCSR_UNIT = 5;
