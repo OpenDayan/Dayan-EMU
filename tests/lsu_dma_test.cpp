@@ -58,6 +58,10 @@ void store_u64(std::vector<uint8_t>& uram, uint64_t addr, uint64_t value) {
     std::memcpy(uram.data() + addr, &value, sizeof(value));
 }
 
+void store_dram_u64(std::vector<uint8_t>& dram, uint64_t addr, uint64_t value) {
+    std::memcpy(dram.data() + addr - kDramBase, &value, sizeof(value));
+}
+
 std::array<uint8_t, kRowBytes> pattern(unsigned seed) {
     std::array<uint8_t, kRowBytes> data{};
     for(size_t byte = 0; byte < data.size(); byte++) {
@@ -342,6 +346,137 @@ void test_tensor_uram_windows(std::vector<uint8_t>& dram) {
                                  true, false));
 }
 
+void test_mmu_dram_translation(std::vector<uint8_t>& uram,
+                               std::vector<uint8_t>& dram) {
+    std::fill(dram.begin(), dram.end(), 0);
+    constexpr uint64_t root = kDramBase;
+    constexpr uint64_t l1 = kDramBase + 0x1000;
+    constexpr uint64_t l2 = kDramBase + 0x2000;
+    constexpr uint64_t source_va = 0x0000000000401000ull;
+    constexpr uint64_t destination_va = 0x0000000000402000ull;
+    constexpr uint64_t source_pa = kDramBase + 0x9000;
+    constexpr uint64_t destination_pa = kDramBase + 0xa000;
+    constexpr uint64_t pte_v = 1ull << 0;
+    constexpr uint64_t pte_r = 1ull << 1;
+    constexpr uint64_t pte_w = 1ull << 2;
+
+    auto vpn = [](uint64_t va) { return (va >> 12) & ((uint64_t{1} << 27) - 1); };
+    auto pte = [](uint64_t pa, uint64_t flags) {
+        return ((pa >> 12) << 10) | flags;
+    };
+    auto pte_address = [](uint64_t table, uint64_t index) {
+        return table + index * sizeof(uint64_t);
+    };
+    const uint64_t source_vpn = vpn(source_va);
+    const uint64_t destination_vpn = vpn(destination_va);
+    store_dram_u64(dram, pte_address(root, (source_vpn >> 18) & 0x1ff),
+                   pte(l1, pte_v));
+    store_dram_u64(dram, pte_address(l1, (source_vpn >> 9) & 0x1ff),
+                   pte(l2, pte_v));
+    store_dram_u64(dram, pte_address(l2, source_vpn & 0x1ff),
+                   pte(source_pa, pte_v | pte_r | pte_w));
+    store_dram_u64(dram, pte_address(l2, destination_vpn & 0x1ff),
+                   pte(destination_pa, pte_v | pte_r | pte_w));
+
+    const auto source = pattern(73);
+    std::copy(source.begin(), source.end(),
+              dram.data() + source_pa - kDramBase);
+    std::fill(dram.data() + destination_pa - kDramBase,
+              dram.data() + destination_pa - kDramBase + kRowBytes, 0xa5);
+
+    RVTNG::exec_unit_t parent;
+    RVTNG::mmu_t mmu(dram.data(), dram.size());
+    mmu.set_fixmap(true, 0, 0);
+    mmu.set_ptw_base(root);
+    test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0, nullptr,
+                   nullptr, &mmu, dram.size(), kDramBase, 4);
+    auto control = make_control();
+    assert(lsu.execute_dma_once(&control, source_va, destination_va,
+                                true, true));
+    assert(std::equal(source.begin(), source.end(),
+                      dram.data() + destination_pa - kDramBase));
+}
+
+void test_mmu_translation_before_tensor_window(
+    std::vector<uint8_t>& dram) {
+    std::array<std::vector<uint8_t>, 4> uram = {
+        std::vector<uint8_t>(kTensorUramSize),
+        std::vector<uint8_t>(kTensorUramSize),
+        std::vector<uint8_t>(kTensorUramSize),
+        std::vector<uint8_t>(kTensorUramSize),
+    };
+    std::array<uint8_t*, 4> windows = {
+        uram[0].data(), uram[1].data(), uram[2].data(), uram[3].data(),
+    };
+
+    std::fill(dram.begin(), dram.end(), 0);
+    constexpr uint64_t root = kDramBase;
+    constexpr uint64_t l1 = kDramBase + 0x1000;
+    constexpr uint64_t l2 = kDramBase + 0x2000;
+    // Both VAs are numerically inside core 3's tensor URAM aperture, but map
+    // through Sv39 to ordinary shared DRAM pages.
+    constexpr uint64_t source_va =
+        kTensorUramBase + 3 * kTensorUramStride + 0x1000;
+    constexpr uint64_t destination_va =
+        kTensorUramBase + 3 * kTensorUramStride + 0x2000;
+    constexpr uint64_t source_pa = kDramBase + 0x9000;
+    constexpr uint64_t destination_pa = kDramBase + 0xa000;
+    constexpr uint64_t pte_v = 1ull << 0;
+    constexpr uint64_t pte_r = 1ull << 1;
+    constexpr uint64_t pte_w = 1ull << 2;
+
+    auto vpn = [](uint64_t va) {
+        return (va >> 12) & ((uint64_t{1} << 27) - 1);
+    };
+    auto pte = [](uint64_t pa, uint64_t flags) {
+        return ((pa >> 12) << 10) | flags;
+    };
+    auto pte_address = [](uint64_t table, uint64_t index) {
+        return table + index * sizeof(uint64_t);
+    };
+    const uint64_t source_vpn = vpn(source_va);
+    const uint64_t destination_vpn = vpn(destination_va);
+    // The two VAs share the same root and level-1 entries.
+    store_dram_u64(dram, pte_address(root, (source_vpn >> 18) & 0x1ff),
+                   pte(l1, pte_v));
+    store_dram_u64(dram, pte_address(l1, (source_vpn >> 9) & 0x1ff),
+                   pte(l2, pte_v));
+    store_dram_u64(dram, pte_address(l2, source_vpn & 0x1ff),
+                   pte(source_pa, pte_v | pte_r | pte_w));
+    store_dram_u64(dram, pte_address(l2, destination_vpn & 0x1ff),
+                   pte(destination_pa, pte_v | pte_r | pte_w));
+
+    const auto source = pattern(97);
+    const auto wrong_source = pattern(101);
+    std::copy(source.begin(), source.end(),
+              dram.data() + source_pa - kDramBase);
+    std::copy(wrong_source.begin(), wrong_source.end(),
+              uram[3].data() + 0x1000);
+    std::fill(dram.data() + destination_pa - kDramBase,
+              dram.data() + destination_pa - kDramBase + kRowBytes, 0xa5);
+    std::fill(uram[3].begin() + 0x2000,
+              uram[3].begin() + 0x2000 + kRowBytes, 0x5a);
+
+    RVTNG::exec_unit_t parent;
+    RVTNG::mmu_t mmu(dram.data(), dram.size());
+    mmu.set_fixmap(true, 0, 0);
+    mmu.set_ptw_base(root);
+    test_lsu_t lsu(&parent, uram[0].data(), dram.data(), windows.data(),
+                   windows.size(), nullptr, nullptr, &mmu, dram.size(),
+                   kDramBase, 4);
+    auto control = make_control();
+    assert(lsu.execute_dma_once(&control, source_va, destination_va,
+                                true, true));
+
+    assert(std::equal(source.begin(), source.end(),
+                      dram.data() + destination_pa - kDramBase));
+    assert(std::equal(std::begin(wrong_source), std::end(wrong_source),
+                      uram[3].data() + 0x1000));
+    assert(std::all_of(uram[3].begin() + 0x2000,
+                       uram[3].begin() + 0x2000 + kRowBytes,
+                       [](uint8_t value) { return value == 0x5a; }));
+}
+
 void test_context_uram_interrupts(std::vector<uint8_t>& uram,
                                   std::vector<uint8_t>& dram) {
     RVTNG::exec_unit_t parent;
@@ -408,6 +543,8 @@ int main() {
     test_block_rows_dominate_padding(lsu, uram, dram);
     test_aligned_transpose(lsu, uram, dram);
     test_tensor_uram_windows(dram);
+    test_mmu_dram_translation(uram, dram);
+    test_mmu_translation_before_tensor_window(dram);
     test_context_uram_interrupts(uram, dram);
     std::cout << "LSU DMA tests passed\n";
     return 0;

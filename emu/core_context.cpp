@@ -5,7 +5,9 @@
 core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
                                uint8_t* dram, uint8_t* uram,
                                uint8_t *const *cluster_urams,
-                               size_t cluster_core_count)
+                               size_t cluster_core_count,
+                               size_t dram_size,
+                               uint64_t dram_base)
     : core_id(id), uram(uram), running(true) {
 
     // Create top-level execution unit
@@ -31,11 +33,19 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
 
     top->register_issue_callback(this, &core_context_t::issue_global);
 
+    // Create one MMU/cache context per core.  The PTW reader observes the
+    // shared DRAM image; reset defaults leave the full-range identity FixMap
+    // enabled, preserving the pre-MMU CModel behaviour until software
+    // programs the register image exposed by core_context_t::mmu.
+    mmu = std::make_unique<RVTNG::mmu_t>(dram, dram_size, dram_base);
+
     // Create execution units (each core has its own URAM, but shares DRAM)
     lsu = std::make_unique<RVTNG::lsu_t>(top.get(), uram, dram,
                                         cluster_urams,
                                         cluster_core_count,
-                                        tensor_context.get(), interrupts.get());
+                                        tensor_context.get(), interrupts.get(),
+                                        mmu.get(), dram_size, dram_base,
+                                        static_cast<uint8_t>(4 + (id & 0x3)));
     mat = std::make_unique<RVTNG::mat_t>(top.get(), uram,
                                         tensor_context.get(), interrupts.get());
     vec = std::make_unique<RVTNG::vec_t>(top.get(), uram, 16,

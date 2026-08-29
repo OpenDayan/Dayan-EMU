@@ -2,6 +2,7 @@
 #define __LSU_H__
 
 #include "exec_unit.hpp"
+#include "mmu.hpp"
 #include "thread_safe_queue.h"
 #include "tensor_context.hpp"
 #include "interrupt.hpp"
@@ -50,7 +51,11 @@ public:
           uint8_t *const *cluster_urams = nullptr,
           size_t cluster_core_count = 0,
           tensor_context_t* context = nullptr,
-          interrupt_controller_t* interrupts = nullptr);
+          interrupt_controller_t* interrupts = nullptr,
+          mmu_t* mmu = nullptr,
+          size_t dram_size = 0,
+          uint64_t dram_base = MMU_DRAM_BASE,
+          uint8_t mmu_port = 0);
     ~lsu_t();
     void execute(void);  // 独占循环
     void enqueue_context(const rvt_pack_t& inst,
@@ -68,6 +73,12 @@ protected:
                            interrupt_source_t align_source,
                            size_t alignment = 32,
                            uint64_t swizzle = 0) const;
+    // Translate a D-side DRAM address and validate that the resulting
+    // physical range is representable by the shared DRAM image.  A faulting
+    // translation still returns its redirect PA, matching ClusterMMU's
+    // external fault semantics.
+    bool translate_dram_address(uint64_t address, mmu_access_type_t access,
+                                size_t size, uint64_t* physical_address);
     // 私有指令队列
     MPMCQueue<queued_tensor_inst_t, 128> inst_queue;
     // 私有 LSU buffer
@@ -84,6 +95,10 @@ protected:
     uint8_t* uram;
     // dram
     uint8_t* dram;
+    size_t dram_size;
+    uint64_t dram_base;
+    mmu_t* mmu;
+    uint8_t mmu_port;
     // URAM windows exposed on the tensor/D-side address range.
     uint8_t *const *cluster_urams;
     size_t cluster_core_count;

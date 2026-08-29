@@ -1,7 +1,7 @@
 .PHONY: all test clean
 
 BUILD_DIR ?= ../build/tests
-TARGETS := $(BUILD_DIR)/tensor_context_interrupt_test $(BUILD_DIR)/vec_scalar_test $(BUILD_DIR)/vec_unary_test $(BUILD_DIR)/vec_sfu_execution_test $(BUILD_DIR)/vec_convert_test $(BUILD_DIR)/vec_convert_execution_test $(BUILD_DIR)/vec_mul24_test $(BUILD_DIR)/vec_minmax_execution_test $(BUILD_DIR)/vec_channel_stride_test $(BUILD_DIR)/vec_shuffle_test $(BUILD_DIR)/vec_shuffle_execution_test $(BUILD_DIR)/vec_block_retirement_test
+TARGETS := $(BUILD_DIR)/tensor_context_interrupt_test $(BUILD_DIR)/vec_scalar_test $(BUILD_DIR)/vec_unary_test $(BUILD_DIR)/vec_sfu_execution_test $(BUILD_DIR)/vec_convert_test $(BUILD_DIR)/vec_convert_execution_test $(BUILD_DIR)/vec_mul24_test $(BUILD_DIR)/vec_minmax_execution_test $(BUILD_DIR)/vec_channel_stride_test $(BUILD_DIR)/vec_shuffle_test $(BUILD_DIR)/vec_shuffle_execution_test $(BUILD_DIR)/vec_block_retirement_test $(BUILD_DIR)/mmu_test
 CXXFLAGS ?= -std=c++20 -Wall -Wextra
 
 all: test
@@ -12,6 +12,10 @@ test: $(TARGETS)
 $(BUILD_DIR)/tensor_context_interrupt_test: tensor_context_interrupt_test.cpp ../utils/interrupt.cpp ../include/tensor_context.hpp ../include/interrupt.hpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../utils/interrupt.cpp $(LDFLAGS) -o $@
+
+$(BUILD_DIR)/mmu_test: mmu_test.cpp ../emu/mmu.cpp ../include/mmu.hpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../emu/mmu.cpp $(LDFLAGS) -o $@
 
 $(BUILD_DIR)/vec_scalar_test: vec_scalar_test.cpp ../include/vec_scalar.hpp ../include/vec.hpp
 	@mkdir -p $(BUILD_DIR)

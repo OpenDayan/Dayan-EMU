@@ -4,6 +4,7 @@
 #include "utils.hpp"
 #include "rvtng-intf.h"
 #include "exec_unit.hpp"
+#include "mmu.hpp"
 #include "lsu.hpp"
 #include "mat.hpp"
 #include "vec.hpp"
@@ -18,6 +19,7 @@ public:
     int core_id;
     uint8_t* uram;  // Per-core URAM pointer
     std::unique_ptr<RVTNG::exec_unit_t> top;
+    std::unique_ptr<RVTNG::mmu_t> mmu;
     std::unique_ptr<RVTNG::lsu_t> lsu;
     std::unique_ptr<RVTNG::mat_t> mat;
     std::unique_ptr<RVTNG::vec_t> vec;
@@ -34,7 +36,9 @@ public:
     // Constructor: Initialize all core components
     core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram,
                    uint8_t* uram, uint8_t *const *cluster_urams,
-                   size_t cluster_core_count);
+                   size_t cluster_core_count,
+                   size_t dram_size = RVTNG::MMU_DEFAULT_DRAM_SIZE,
+                   uint64_t dram_base = RVTNG::MMU_DRAM_BASE);
 
     // Destructor: Clean up resources
     ~core_context_t();

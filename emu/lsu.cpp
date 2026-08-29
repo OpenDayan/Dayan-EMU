@@ -12,7 +12,6 @@
 
 namespace RVTNG {
     namespace {
-        constexpr uint64_t kDramBase = 0x80000000ull;
         constexpr uint64_t kUramSize = 1536ull * 1024ull;
         constexpr uint64_t kTensorUramBase = 0x00800000ull;
         constexpr uint64_t kTensorUramStride = 2ull * 1024ull * 1024ull;
@@ -161,17 +160,28 @@ namespace RVTNG {
                                 return false;
                             }
                             if(src_dram) {
-                                if(const uint8_t* tensor =
-                                       tensor_uram_address(addr,
-                                                           read_size)) {
-                                    std::memcpy(row, tensor, read_size);
-                                } else if(addr >= kDramBase) {
-                                    std::memcpy(row, dram + addr - kDramBase,
-                                                read_size);
-                                } else {
+                                // D-side addresses are virtual whenever the
+                                // MMU is enabled.  Translate first, then use
+                                // the resulting PA to select a tensor URAM
+                                // window or the shared DRAM image.  Looking up
+                                // the VA directly would let a VA that happens
+                                // to overlap the URAM aperture bypass page
+                                // tables, permissions, and redirects.
+                                uint64_t physical_address = 0;
+                                if(!translate_dram_address(
+                                       addr, mmu_access_type_t::read,
+                                       read_size, &physical_address)) {
                                     debugf("Fault! Invalid D-side DMA source!\n");
                                     return false;
                                 }
+                                const uint8_t* source =
+                                    tensor_uram_address(physical_address,
+                                                        read_size);
+                                if(!source) {
+                                    source = dram +
+                                        (physical_address - dram_base);
+                                }
+                                std::memcpy(row, source, read_size);
                             } else {
                                 if(!check_uram_access(
                                        addr, read_size,
@@ -211,17 +221,22 @@ namespace RVTNG {
                                 return false;
                             }
                             if(dst_dram) {
-                                if(uint8_t* tensor =
-                                       tensor_uram_address(addr, write_size)) {
-                                    std::memcpy(tensor, transfer_buf,
-                                                write_size);
-                                } else if(addr >= kDramBase) {
-                                    std::memcpy(dram + addr - kDramBase,
-                                                transfer_buf, write_size);
-                                } else {
+                                uint64_t physical_address = 0;
+                                if(!translate_dram_address(
+                                       addr, mmu_access_type_t::write,
+                                       write_size, &physical_address)) {
                                     debugf("Fault! Invalid D-side DMA destination!\n");
                                     return false;
                                 }
+                                uint8_t* destination =
+                                    tensor_uram_address(physical_address,
+                                                        write_size);
+                                if(!destination) {
+                                    destination = dram +
+                                        (physical_address - dram_base);
+                                }
+                                std::memcpy(destination, transfer_buf,
+                                            write_size);
                             } else {
                                 if(!check_uram_access(
                                        addr, write_size,
@@ -247,8 +262,14 @@ namespace RVTNG {
                  uint8_t *const *cluster_urams,
                  size_t cluster_core_count,
                  tensor_context_t* context,
-                 interrupt_controller_t* interrupts)
-        : uram(uram), dram(dram), cluster_urams(cluster_urams),
+                 interrupt_controller_t* interrupts,
+                 mmu_t* mmu,
+                 size_t dram_size,
+                 uint64_t dram_base,
+                 uint8_t mmu_port)
+        : uram(uram), dram(dram), dram_size(dram_size),
+          dram_base(dram_base & MMU_PA_MASK), mmu(mmu), mmu_port(mmu_port),
+          cluster_urams(cluster_urams),
           cluster_core_count(cluster_core_count), context(context),
           interrupts(interrupts),
           active_context(tensor_context_snapshot_t::defaults()) {
@@ -258,6 +279,48 @@ namespace RVTNG {
         this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
         lsu_buffer = new uint8_t[512 * 64];
         memset(this->tcsr, 0, sizeof(this->tcsr));
+    }
+
+    bool lsu_t::translate_dram_address(uint64_t address,
+                                       mmu_access_type_t access,
+                                       size_t size,
+                                       uint64_t* physical_address) {
+        if(!physical_address) {
+            return false;
+        }
+
+        uint64_t translated = address;
+        if(mmu) {
+            const mmu_translation_result_t result =
+                mmu->translate(address, access, mmu_port);
+            translated = result.pa;
+            if(!result.ok()) {
+                debugf("LSU: MMU fault=%u va=0x%lx redirect=0x%lx\n",
+                       static_cast<unsigned>(result.fault), address,
+                       translated);
+            }
+        }
+        translated &= MMU_PA_MASK;
+        // A translated D-side address may legally target a remote tensor
+        // URAM window.  Such a PA is not part of the shared DRAM image, so
+        // accept it before applying the DRAM range check below.
+        if(tensor_uram_address(translated, size) != nullptr) {
+            *physical_address = translated;
+            return true;
+        }
+        if(!dram || translated < dram_base) {
+            return false;
+        }
+        const uint64_t offset = translated - dram_base;
+        if(dram_size != 0) {
+            if(offset > dram_size || size > dram_size - offset) {
+                return false;
+            }
+        } else if(size > std::numeric_limits<size_t>::max() - offset) {
+            return false;
+        }
+        *physical_address = translated;
+        return true;
     }
     lsu_t::~lsu_t() {
         delete[] lsu_buffer;

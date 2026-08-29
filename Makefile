@@ -57,7 +57,7 @@ all: qemu $(SUB_DIRS) $(BUILD_DIR) $(OUTPUT_DIR)
 	@echo "Build completed: $(OUTPUT_DIR)/$(PROJECT_NAME)"
 
 test: $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp utils/interrupt.cpp $(LDFLAGS) -o $(LSU_DMA_TEST)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp emu/mmu.cpp utils/interrupt.cpp $(LDFLAGS) -o $(LSU_DMA_TEST)
 	$(LSU_DMA_TEST)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp utils/interrupt.cpp $(LDFLAGS) -o $(MAT_TEST)
 	$(MAT_TEST)
