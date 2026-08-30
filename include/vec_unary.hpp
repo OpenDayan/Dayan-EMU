@@ -20,6 +20,7 @@ struct vec_unary_fields_t {
     uint8_t op = 0;
     uint8_t shift_amount = 0;
     uint8_t rounding_mode = 0;
+    uint8_t precision = 0;
 };
 
 constexpr vec_unary_fields_t decode_vec_unary(uint32_t raw)
@@ -42,7 +43,8 @@ constexpr vec_unary_fields_t decode_vec_unary(uint32_t raw)
         const uint8_t subclass = (raw >> 18) & 0x3;
         if(subclass == 0b00) {
             return {vec_unary_kind_t::sfu,
-                    static_cast<uint8_t>((raw >> 12) & 0x3f), 0, 0};
+                    static_cast<uint8_t>((raw >> 12) & 0x1f), 0, 0,
+                    static_cast<uint8_t>((raw >> 17) & 0x1)};
         }
         if(subclass == 0b01) {
             return {vec_unary_kind_t::convert,
@@ -53,15 +55,37 @@ constexpr vec_unary_fields_t decode_vec_unary(uint32_t raw)
     return {};
 }
 
-inline bool vec_sfu_op_supported(uint8_t op)
+inline bool vec_sfu_op_supported(uint8_t precision, uint8_t op)
 {
-    return op <= 5;
+    return precision == 0 ? op <= 5 : precision == 1 && op <= 1;
 }
 
-inline uint32_t execute_vec_sfu_lane(uint32_t input, uint8_t op)
+inline uint32_t execute_vec_sfu_lane(uint32_t input, uint8_t precision,
+                                    uint8_t op)
 {
     const float x = std::bit_cast<float>(input);
     float result;
+
+    // The ISA leaves ERU approximation accuracy implementation-defined.  The
+    // functional model uses the same deterministic FP32 semantics as SFU.
+    if(precision == 1) {
+        switch(op) {
+        case 0:
+            result = std::exp2(x);
+            break;
+        case 1:
+            result = 1.0f / x;
+            break;
+        default:
+            throw std::invalid_argument("unsupported fast VEC SFU operation");
+        }
+        return std::bit_cast<uint32_t>(result);
+    }
+
+    if(precision != 0) {
+        throw std::invalid_argument("unsupported VEC SFU precision");
+    }
+
     switch(op) {
     case 0:
         result = std::log2(x);

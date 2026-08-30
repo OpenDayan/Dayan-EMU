@@ -1,7 +1,7 @@
 .PHONY: all test clean
 
 BUILD_DIR ?= ../build/tests
-TARGETS := $(BUILD_DIR)/tensor_context_interrupt_test $(BUILD_DIR)/vec_scalar_test $(BUILD_DIR)/vec_unary_test $(BUILD_DIR)/vec_convert_test $(BUILD_DIR)/vec_convert_execution_test $(BUILD_DIR)/vec_mul24_test $(BUILD_DIR)/vec_minmax_execution_test $(BUILD_DIR)/vec_channel_stride_test $(BUILD_DIR)/vec_shuffle_test $(BUILD_DIR)/vec_shuffle_execution_test $(BUILD_DIR)/vec_block_retirement_test
+TARGETS := $(BUILD_DIR)/tensor_context_interrupt_test $(BUILD_DIR)/vec_scalar_test $(BUILD_DIR)/vec_unary_test $(BUILD_DIR)/vec_sfu_execution_test $(BUILD_DIR)/vec_convert_test $(BUILD_DIR)/vec_convert_execution_test $(BUILD_DIR)/vec_mul24_test $(BUILD_DIR)/vec_minmax_execution_test $(BUILD_DIR)/vec_channel_stride_test $(BUILD_DIR)/vec_shuffle_test $(BUILD_DIR)/vec_shuffle_execution_test $(BUILD_DIR)/vec_block_retirement_test
 CXXFLAGS ?= -std=c++20 -Wall -Wextra
 
 all: test
@@ -24,6 +24,10 @@ $(BUILD_DIR)/vec_block_retirement_test: vec_block_retirement_test.cpp ../include
 $(BUILD_DIR)/vec_unary_test: vec_unary_test.cpp ../include/vec_unary.hpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< -o $@
+
+$(BUILD_DIR)/vec_sfu_execution_test: vec_sfu_execution_test.cpp ../emu/vec.cpp ../utils/interrupt.cpp ../include/vec.hpp ../include/vec_unary.hpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../emu/vec.cpp ../utils/interrupt.cpp $(LDFLAGS) -o $@
 
 $(BUILD_DIR)/vec_convert_test: vec_convert_test.cpp ../include/vec_convert.hpp ../include/vec_shuffle.hpp ../include/vec_unary.hpp
 	@mkdir -p $(BUILD_DIR)

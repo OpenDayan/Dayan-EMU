@@ -627,7 +627,8 @@ static void execute_vec_v_sfu(vec_thread_context_t& ctx, const vec_fields_t& f)
     const vec_lane_t& src = read_vec(ctx, f.vrs1_low);
     vec_lane_t& dst = write_vec(ctx, f.vb);
     for(size_t lane = 0; lane < dst.u32.size(); lane++) {
-        dst.u32[lane] = execute_vec_sfu_lane(src.u32[lane], f.unary.op);
+        dst.u32[lane] = execute_vec_sfu_lane(
+            src.u32[lane], f.unary.precision, f.unary.op);
     }
 }
 
@@ -916,10 +917,11 @@ static void execute_one_vec_inst(vec_thread_context_t& ctx, const vec_inst_t& in
             }
         }
         if(f.unary.kind == vec_unary_kind_t::sfu) {
-            if(vec_sfu_op_supported(f.unary.op)) {
+            if(vec_sfu_op_supported(f.unary.precision, f.unary.op)) {
                 execute_vec_v_sfu(ctx, f);
             } else {
-                debugf("VEC: unsupported SFU op 0x%x\n", f.unary.op);
+                debugf("VEC: unsupported SFU precision %u op 0x%x\n",
+                       f.unary.precision, f.unary.op);
             }
             return;
         }
