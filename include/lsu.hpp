@@ -76,9 +76,16 @@ protected:
     // Translate a D-side DRAM address and validate that the resulting
     // physical range is representable by the shared DRAM image.  A faulting
     // translation still returns its redirect PA, matching ClusterMMU's
-    // external fault semantics.
+    // external fault semantics.  The address range must stay inside one
+    // virtual page; copy_dram_data() splits page-straddling accesses.
     bool translate_dram_address(uint64_t address, mmu_access_type_t access,
                                 size_t size, uint64_t* physical_address);
+    // Copy between the D-side address space and a local staging buffer.
+    // The range may straddle a page boundary; every page-granule segment is
+    // translated independently, so non-contiguous physical pages and
+    // per-page permission faults are modelled exactly.
+    bool copy_dram_data(uint64_t address, uint8_t* buffer, size_t size,
+                        mmu_access_type_t access);
     // 私有指令队列
     MPMCQueue<queued_tensor_inst_t, 128> inst_queue;
     // 私有 LSU buffer

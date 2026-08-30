@@ -397,6 +397,103 @@ void test_mmu_dram_translation(std::vector<uint8_t>& uram,
                       dram.data() + destination_pa - kDramBase));
 }
 
+void test_mmu_page_crossing_translation(std::vector<uint8_t>& uram,
+                                        std::vector<uint8_t>& dram) {
+    std::fill(dram.begin(), dram.end(), 0);
+    constexpr uint64_t root = kDramBase;
+    constexpr uint64_t l1 = kDramBase + 0x1000;
+    constexpr uint64_t l2 = kDramBase + 0x2000;
+    constexpr uint64_t pte_v = 1ull << 0;
+    constexpr uint64_t pte_r = 1ull << 1;
+    constexpr uint64_t pte_w = 1ull << 2;
+
+    auto vpn = [](uint64_t va) {
+        return (va >> 12) & ((uint64_t{1} << 27) - 1);
+    };
+    auto pte = [](uint64_t pa, uint64_t flags) {
+        return ((pa >> 12) << 10) | flags;
+    };
+    auto pte_address = [](uint64_t table, uint64_t index) {
+        return table + index * sizeof(uint64_t);
+    };
+    auto store_leaf = [&](uint64_t va, uint64_t pa, uint64_t flags) {
+        const uint64_t entry = vpn(va);
+        store_dram_u64(dram, pte_address(root, (entry >> 18) & 0x1ff),
+                       pte(l1, pte_v));
+        store_dram_u64(dram, pte_address(l1, (entry >> 9) & 0x1ff),
+                       pte(l2, pte_v));
+        store_dram_u64(dram, pte_address(l2, entry & 0x1ff), pte(pa, flags));
+    };
+
+    // Every burst starts 32 B before a page end, so its 64 B transfer splits
+    // into a 32 B head and a 32 B tail on the next virtual page.  Each page
+    // pair maps to physical pages that are not contiguous, which only works
+    // if every page is translated on its own.  All pages share one level-1
+    // entry and use distinct level-2 slots (vpn[8:0]), so the leaf PTEs do
+    // not collide inside the shared level-2 table.
+    constexpr uint64_t source_va = 0x0000000000401fe0ull;
+    constexpr uint64_t destination_va = 0x0000000000403fe0ull;
+    constexpr uint64_t perm_destination_va = 0x0000000000405fe0ull;
+    constexpr uint64_t unmapped_source_va = 0x0000000000407fe0ull;
+    constexpr uint64_t source_pa = kDramBase + 0x9000;
+    constexpr uint64_t source_next_pa = kDramBase + 0x11000;
+    constexpr uint64_t destination_pa = kDramBase + 0xa000;
+    constexpr uint64_t destination_next_pa = kDramBase + 0x12000;
+    constexpr uint64_t scratch_pa = kDramBase + 0xb000;
+    constexpr uint64_t perm_destination_pa = kDramBase + 0xc000;
+    constexpr uint64_t perm_destination_next_pa = kDramBase + 0x14000;
+
+    store_leaf(source_va, source_pa, pte_v | pte_r | pte_w);
+    store_leaf(source_va + 0x20, source_next_pa, pte_v | pte_r | pte_w);
+    store_leaf(destination_va, destination_pa, pte_v | pte_r | pte_w);
+    store_leaf(destination_va + 0x20, destination_next_pa,
+               pte_v | pte_r | pte_w);
+    store_leaf(perm_destination_va, perm_destination_pa,
+               pte_v | pte_r | pte_w);
+    // Second page of this write burst lacks W.
+    store_leaf(perm_destination_va + 0x20, perm_destination_next_pa,
+               pte_v | pte_r);
+    store_leaf(unmapped_source_va, scratch_pa, pte_v | pte_r | pte_w);
+    // Second page of this read burst has no valid PTE at all.
+
+    constexpr size_t cross_bytes = 0x1000 - (source_va & 0xfff);
+    const auto first = pattern(81);
+    const auto second = pattern(82);
+    std::copy(first.begin(), first.end(),
+              dram.data() + source_pa - kDramBase + (source_va & 0xfff));
+    std::copy(second.begin(), second.end(),
+              dram.data() + source_next_pa - kDramBase);
+    std::fill(dram.data() + destination_pa - kDramBase + (destination_va & 0xfff),
+              dram.data() + destination_pa - kDramBase + 0x1000, 0xa5);
+    std::fill(dram.data() + destination_next_pa - kDramBase,
+              dram.data() + destination_next_pa - kDramBase + cross_bytes,
+              0xa5);
+
+    RVTNG::exec_unit_t parent;
+    RVTNG::mmu_t mmu(dram.data(), dram.size());
+    mmu.set_fixmap(true, 0, 0);
+    mmu.set_ptw_base(root);
+    test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0, nullptr,
+                   nullptr, &mmu, dram.size(), kDramBase, 4);
+    auto control = make_control();
+
+    assert(lsu.execute_dma_once(&control, source_va, destination_va,
+                                true, true));
+    assert(std::equal(first.begin(), first.begin() + cross_bytes,
+                      dram.data() + destination_pa - kDramBase +
+                          (destination_va & 0xfff)));
+    assert(std::equal(second.begin(), second.begin() + cross_bytes,
+                      dram.data() + destination_next_pa - kDramBase));
+
+    // A write whose second page is read-only must fault instead of silently
+    // reusing the first page's translation.
+    assert(!lsu.execute_dma_once(&control, source_va, perm_destination_va,
+                                 true, true));
+    // A read whose second page is unmapped must fault as well.
+    assert(!lsu.execute_dma_once(&control, unmapped_source_va,
+                                 destination_va, true, true));
+}
+
 void test_mmu_translation_before_tensor_window(
     std::vector<uint8_t>& dram) {
     std::array<std::vector<uint8_t>, 4> uram = {
@@ -544,6 +641,7 @@ int main() {
     test_aligned_transpose(lsu, uram, dram);
     test_tensor_uram_windows(dram);
     test_mmu_dram_translation(uram, dram);
+    test_mmu_page_crossing_translation(uram, dram);
     test_mmu_translation_before_tensor_window(dram);
     test_context_uram_interrupts(uram, dram);
     std::cout << "LSU DMA tests passed\n";

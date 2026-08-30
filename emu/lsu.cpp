@@ -19,6 +19,7 @@ namespace RVTNG {
         constexpr uint64_t kTensorUramBytes = 1536ull * 1024ull;
         constexpr uint64_t kLogicalRowBytes = 64;
         constexpr uint64_t kUramPortBytes = 32;
+        constexpr uint64_t kMmuMinPageSize = MMU_PAGE_OFFSET_MASK + 1;
 
         void fill_padding(uint8_t* dst, const uint8_t* padding, uint64_t begin = 0) {
             for(uint64_t byte = begin; byte < kLogicalRowBytes; byte++) {
@@ -167,21 +168,11 @@ namespace RVTNG {
                                 // the VA directly would let a VA that happens
                                 // to overlap the URAM aperture bypass page
                                 // tables, permissions, and redirects.
-                                uint64_t physical_address = 0;
-                                if(!translate_dram_address(
-                                       addr, mmu_access_type_t::read,
-                                       read_size, &physical_address)) {
+                                if(!copy_dram_data(addr, row, read_size,
+                                                   mmu_access_type_t::read)) {
                                     debugf("Fault! Invalid D-side DMA source!\n");
                                     return false;
                                 }
-                                const uint8_t* source =
-                                    tensor_uram_address(physical_address,
-                                                        read_size);
-                                if(!source) {
-                                    source = dram +
-                                        (physical_address - dram_base);
-                                }
-                                std::memcpy(row, source, read_size);
                             } else {
                                 if(!check_uram_access(
                                        addr, read_size,
@@ -221,22 +212,12 @@ namespace RVTNG {
                                 return false;
                             }
                             if(dst_dram) {
-                                uint64_t physical_address = 0;
-                                if(!translate_dram_address(
-                                       addr, mmu_access_type_t::write,
-                                       write_size, &physical_address)) {
+                                if(!copy_dram_data(addr, transfer_buf,
+                                                   write_size,
+                                                   mmu_access_type_t::write)) {
                                     debugf("Fault! Invalid D-side DMA destination!\n");
                                     return false;
                                 }
-                                uint8_t* destination =
-                                    tensor_uram_address(physical_address,
-                                                        write_size);
-                                if(!destination) {
-                                    destination = dram +
-                                        (physical_address - dram_base);
-                                }
-                                std::memcpy(destination, transfer_buf,
-                                            write_size);
                             } else {
                                 if(!check_uram_access(
                                        addr, write_size,
@@ -320,6 +301,40 @@ namespace RVTNG {
             return false;
         }
         *physical_address = translated;
+        return true;
+    }
+
+    bool lsu_t::copy_dram_data(uint64_t address, uint8_t* buffer,
+                               size_t size, mmu_access_type_t access) {
+        // read_size/write_size never exceed 64 B, but the start address is
+        // unaligned, so the range may straddle a virtual page boundary.
+        // Hardware translates every page of such a burst on its own, and
+        // consecutive pages may map to non-contiguous physical pages with
+        // independent permissions.  Split at the finest (4 KiB) page granule
+        // and translate each segment separately.
+        uint64_t consumed = 0;
+        while(consumed < size) {
+            const uint64_t page_offset =
+                (address + consumed) & (kMmuMinPageSize - 1);
+            const uint64_t chunk =
+                std::min<uint64_t>(size - consumed,
+                                   kMmuMinPageSize - page_offset);
+            uint64_t physical_address = 0;
+            if(!translate_dram_address(address + consumed, access, chunk,
+                                       &physical_address)) {
+                return false;
+            }
+            uint8_t* target = tensor_uram_address(physical_address, chunk);
+            if(!target) {
+                target = dram + (physical_address - dram_base);
+            }
+            if(access == mmu_access_type_t::write) {
+                std::memcpy(target, buffer + consumed, chunk);
+            } else {
+                std::memcpy(buffer + consumed, target, chunk);
+            }
+            consumed += chunk;
+        }
         return true;
     }
     lsu_t::~lsu_t() {
