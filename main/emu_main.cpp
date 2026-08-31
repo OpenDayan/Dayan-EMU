@@ -1,6 +1,7 @@
 #include "utils.hpp"
 #include "rvtng-intf.h"
 #include "core_context.hpp"
+#include <atomic>
 #include <thread>
 #include <optional>
 #include <signal.h>
@@ -12,6 +13,90 @@ static constexpr size_t kUramBytesPerCore = 1536 * 1024;
 #ifndef RVTNG_DEFAULT_QEMU
 #define RVTNG_DEFAULT_QEMU "deps/npu-qemu/build/dl-riscv64"
 #endif
+
+/*
+ * ClusterMMU config sync (qemu-MMU extension).  The QEMU front end is
+ * authoritative for the scalar ClusterMMU and pushes every accepted
+ * translation-semantic APB write as {0x20, addr, value} and every
+ * flush trigger as {0x21, mode | asid << 8} on the dedicated
+ * RVT_MMU_SOCKET_PATH socket (8-byte word records).  This loop owns the
+ * listening end and applies each event to all cores' mmu_t so the
+ * tensor ports translate against the same config image.  Status
+ * registers are never mirrored: FLUSH_DONE/ACK stay QEMU-authoritative.
+ *
+ * Non-fatal by design: with an older QEMU (no config-sync peer) the
+ * thread simply blocks in accept() and the emulator runs unchanged.
+ *
+ * Startup handshake: while a peer connection is being established and
+ * until its initial config replay (which always ends in a flush) has
+ * been applied, mmu_config_synced stays false and the main loop holds
+ * tensor instruction fetch, so no tensor access can run against the
+ * reset or partially-replayed config image.
+ */
+static std::atomic<bool> mmu_config_synced{true};
+
+static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* cores) {
+    for(;;) {
+        int fd = rvt_socket_server_init(RVT_MMU_SOCKET_PATH);
+        if(fd < 0) {
+            fprintf(stderr, "MMU config-sync: cannot listen on %s (%s); "
+                            "QEMU register mirroring disabled\n",
+                    RVT_MMU_SOCKET_PATH, strerror(errno));
+            return;
+        }
+        printf("MMU config-sync: QEMU front end connected\n");
+        bool peer_lost = false;
+        bool initial_replay_done = false;
+
+        mmu_config_synced.store(false, std::memory_order_release);
+        while(!peer_lost) {
+            uint64_t opcode;
+            if(rvt_socket_pop(fd, &opcode) != 0) {
+                peer_lost = true;
+                break;
+            }
+            switch(opcode) {
+            case 0x20: { // {addr, value} translation-semantic register write
+                uint64_t addr, value;
+                if(rvt_socket_pop(fd, &addr) != 0 ||
+                   rvt_socket_pop(fd, &value) != 0) {
+                    peer_lost = true;
+                    break;
+                }
+                for(auto& core : *cores) {
+                    core->mmu->write_register((uint16_t)addr, (uint32_t)value);
+                }
+                break;
+            }
+            case 0x21: { // {mode | asid << 8} TLB flush trigger
+                uint64_t payload;
+                if(rvt_socket_pop(fd, &payload) != 0) {
+                    peer_lost = true;
+                    break;
+                }
+                for(auto& core : *cores) {
+                    core->mmu->flush((payload & 1) != 0,
+                                     (uint8_t)(payload >> 8));
+                }
+                if(!initial_replay_done) {
+                    // The initial replay ends with a full flush; tensor
+                    // execution may resume once it has been applied.
+                    initial_replay_done = true;
+                    mmu_config_synced.store(true, std::memory_order_release);
+                }
+                break;
+            }
+            default:
+                fprintf(stderr, "MMU config-sync: unknown opcode 0x%llx ignored\n",
+                        (unsigned long long)opcode);
+                break;
+            }
+        }
+
+        fprintf(stderr, "MMU config-sync: QEMU peer lost; re-listening\n");
+        close(fd);
+    }
+}
 
 int main(int argc, char** argv) {
     int fdMsg, fdInstReq, fdInstRsp;
@@ -190,8 +275,18 @@ int main(int argc, char** argv) {
 
     debugf("Main: All %d cores initialized and started\n", num_cores);
 
+    // Mirror QEMU's ClusterMMU config onto the tensor-side mmu_t
+    // instances (additive; see mmu_config_sync_loop above).
+    std::thread(mmu_config_sync_loop, &cores).detach();
+
     // Main loop: fetch instructions for all cores
     while(1) {
+        // Hold tensor instruction fetch until the ClusterMMU config-sync
+        // connection (if any) has replayed its initial image; see the
+        // handshake note above mmu_config_sync_loop.
+        while(!mmu_config_synced.load(std::memory_order_acquire)) {
+            usleep(100);
+        }
         // Fetch one instruction for each core
         for(auto& core : cores) {
             core->fetch_one(fdInstReq, fdInstRsp, fdInstMutex);

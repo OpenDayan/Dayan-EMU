@@ -58,6 +58,12 @@ typedef struct {
 #define RVT_MSG_SOCKET_PATH "/tmp/card0_rvt_msg"
 #define RVT_INST_REQ_SOCKET_PATH "/tmp/card0_rvt_inst_req"
 #define RVT_INST_RSP_SOCKET_PATH "/tmp/card0_rvt_inst_rsp"
+/* ClusterMMU config-sync socket : the CModel owns the listening end;
+ * the QEMU front end pushes {0x20, addr, value}
+ * register writes and {0x21, mode|asid<<8} flush events as 8-byte word
+ * records.  Deliberately a separate socket from the position-framed
+ * msg socket so the two protocols can never be cross-read. */
+#define RVT_MMU_SOCKET_PATH "/tmp/card0_rvt_mmu"
 
 // Frontend Service API
 int frontend_dram_read_service(char *buf, size_t size, off_t addr);
