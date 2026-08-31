@@ -13,9 +13,16 @@ $(BUILD_DIR)/tensor_context_interrupt_test: tensor_context_interrupt_test.cpp ..
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../utils/interrupt.cpp $(LDFLAGS) -o $@
 
-$(BUILD_DIR)/mmu_test: mmu_test.cpp ../emu/mmu.cpp ../include/mmu.hpp
+MMU_CORE_OBJ := $(BUILD_DIR)/rvtng_mmu_core.o
+
+$(MMU_CORE_OBJ): ../deps/npu-qemu/hw/riscv/rvtng_mmu_core.c \
+                 ../deps/npu-qemu/include/hw/riscv/rvtng_mmu_core.h
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../emu/mmu.cpp $(LDFLAGS) -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/mmu_test: mmu_test.cpp ../emu/mmu.cpp ../include/mmu.hpp $(MMU_CORE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../emu/mmu.cpp $(MMU_CORE_OBJ) $(LDFLAGS) -o $@
 
 $(BUILD_DIR)/vec_scalar_test: vec_scalar_test.cpp ../include/vec_scalar.hpp ../include/vec.hpp
 	@mkdir -p $(BUILD_DIR)

@@ -12,6 +12,11 @@ NPU_QEMU_BIN ?= $(NPU_QEMU_DIR)/build/dl-riscv64
 NPU_QEMU_JOBS ?= 16
 NPU_QEMU_ENV := env -u CC -u CXX -u AR -u CFLAGS -u CXXFLAGS \
 	-u CPPFLAGS -u LDFLAGS -u CROSS_COMPILE -u BUILD_TYPE
+# Shared ClusterMMU behavioral core, owned by the npu-qemu tree and also
+# linked into this emulator.
+MMU_CORE_SRC := $(NPU_QEMU_DIR)/hw/riscv/rvtng_mmu_core.c
+MMU_CORE_HDR := $(NPU_QEMU_DIR)/include/hw/riscv/rvtng_mmu_core.h
+MMU_CORE_OBJ := $(BUILD_DIR)/rvtng_mmu_core.o
 
 .PHONY: all clean distclean help test deps qemu force-npu-qemu-build $(SUB_DIRS)
 
@@ -42,6 +47,7 @@ $(error Unknown BUILD_TYPE: $(BUILD_TYPE). Use Debug or Release)
 endif
 
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
+CPPFLAGS += -I$(abspath $(NPU_QEMU_DIR))/include
 CPPFLAGS += -DRVTNG_DEFAULT_QEMU=\"$(abspath $(NPU_QEMU_BIN))\"
 
 # 导出变量到子 Makefile
@@ -51,13 +57,17 @@ export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE BUILD_TYPE
 OBJ_FILES :=
 
 # 默认目标
-all: qemu $(SUB_DIRS) $(BUILD_DIR) $(OUTPUT_DIR)
+all: qemu $(SUB_DIRS) $(MMU_CORE_OBJ) $(BUILD_DIR) $(OUTPUT_DIR)
 	@echo "Linking final executable..."
 	$(CXX) $(BUILD_DIR)/*.o $(LDFLAGS) -o $(OUTPUT_DIR)/$(PROJECT_NAME)
 	@echo "Build completed: $(OUTPUT_DIR)/$(PROJECT_NAME)"
 
-test: $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp emu/mmu.cpp utils/interrupt.cpp $(LDFLAGS) -o $(LSU_DMA_TEST)
+$(MMU_CORE_OBJ): $(MMU_CORE_SRC) $(MMU_CORE_HDR)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+test: $(BUILD_DIR) $(MMU_CORE_OBJ)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/lsu_dma_test.cpp emu/lsu.cpp emu/mmu.cpp utils/interrupt.cpp $(MMU_CORE_OBJ) $(LDFLAGS) -o $(LSU_DMA_TEST)
 	$(LSU_DMA_TEST)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp utils/interrupt.cpp $(LDFLAGS) -o $(MAT_TEST)
 	$(MAT_TEST)
