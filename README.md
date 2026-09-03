@@ -67,6 +67,9 @@ flowchart LR
 | `/dram_shm_0` | 双方共享 | 4 GiB DRAM，Guest 基地址为 `0x8000_0000` |
 | `/uram_shm_<core>` | 双方共享 | 每 Core 1.5 MiB URAM；Guest 基地址为 `0x0080_0000 + core × 0x0020_0000` |
 
+ClusterMMU 只翻译 ≥ `0x8000_0000`（DRAM 通路）的地址；低 2GiB（URAM 与控制空间）
+恒为直通，页表/FixMap 重映射对其不生效。
+
 IPC Socket 和共享内存名称目前固定为 `card0`/上述名称，因此同一主机命名空间内
 只能可靠运行一个模拟器实例。
 

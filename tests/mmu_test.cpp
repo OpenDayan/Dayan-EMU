@@ -82,13 +82,21 @@ std::unique_ptr<mmu_t> make_mmu(page_table_image_t& image) {
 
 void test_fixmap() {
     mmu_t mmu;
-    auto result = mmu.translate(0x1234, mmu_access_type_t::read);
+    auto result = mmu.translate(0x80001234, mmu_access_type_t::read);
+    assert(result.ok() && result.pa == 0x80001234);
+
+    // Below the 2 GiB DRAM base the engine is bypassed outright, so the
+    // same offset passes through even though the reset FixMap would
+    // identity-map it too.
+    result = mmu.translate(0x1234, mmu_access_type_t::read);
     assert(result.ok() && result.pa == 0x1234);
 
-    mmu.set_fixmap(false, 0x100000, 2);
-    result = mmu.translate(0x1000, mmu_access_type_t::write);
-    assert(result.ok() && result.pa == 0x101000);
-    result = mmu.translate(0x2000, mmu_access_type_t::read);
+    // Windowed FixMap: base 0x100000, covering VA pages 0x80000..0x80001
+    // (2 pages).
+    mmu.set_fixmap(false, 0x100000, 0x80002);
+    result = mmu.translate(0x80001000, mmu_access_type_t::write);
+    assert(result.ok() && result.pa == 0x80101000);
+    result = mmu.translate(0x80002000, mmu_access_type_t::read);
     assert(!result.ok());
 
     const uint64_t high_va =
@@ -102,7 +110,7 @@ void test_fixmap() {
 void test_page_sizes() {
     {
         page_table_image_t image;
-        constexpr uint64_t va = 0x0000000012345678ull;
+        constexpr uint64_t va = 0x0000000092345678ull;
         install_4k(image, va, kLeaf, kPteV | kPteR | kPteW);
         auto mmu = make_mmu(image);
         const auto result = mmu->translate(va + 0x321,
@@ -115,7 +123,7 @@ void test_page_sizes() {
 
     {
         page_table_image_t image;
-        constexpr uint64_t va = 0x0000000012345678ull;
+        constexpr uint64_t va = 0x0000000092345678ull;
         const uint64_t vpn = vpn_of(va);
         image.ptes[pte_address(kRoot, (vpn >> 18) & 0x1ff)] =
             pte_for(0x80001000, kPteV);
@@ -131,7 +139,7 @@ void test_page_sizes() {
 
     {
         page_table_image_t image;
-        constexpr uint64_t va = 0x0000000012345678ull;
+        constexpr uint64_t va = 0x0000000092345678ull;
         const uint64_t physical = 0x0000000080000000ull;
         const uint64_t vpn = vpn_of(va);
         image.ptes[pte_address(kRoot, (vpn >> 18) & 0x1ff)] =
@@ -146,7 +154,7 @@ void test_page_sizes() {
 
 void test_faults_and_permissions() {
     page_table_image_t image;
-    constexpr uint64_t va = 0x0000000000456789ull;
+    constexpr uint64_t va = 0x0000000080456789ull;
     install_4k(image, va, kLeaf, kPteV | kPteR);
     auto mmu = make_mmu(image);
 
@@ -191,7 +199,7 @@ void test_faults_and_permissions() {
 
 void test_negative_cache_and_flush() {
     page_table_image_t image;
-    constexpr uint64_t va = 0x0000000000123456ull;
+    constexpr uint64_t va = 0x0000000080123456ull;
     image.response = mmu_pte_read_result_t::response_t::bus_error;
     auto mmu = make_mmu(image);
     auto result = mmu->translate(va, mmu_access_type_t::read);
@@ -236,10 +244,10 @@ void test_apb_and_snapshot() {
     assert(mmu.read_register(0x04c) == 2);
 
     mmu.set_fixmap(false, 0x1000, 0);
-    auto request = mmu.capture_request(0x2000, mmu_access_type_t::read);
+    auto request = mmu.capture_request(0x80002000, mmu_access_type_t::read);
     mmu.set_fixmap(false, 0x4000, 0);
     auto result = mmu.translate(request);
-    assert(result.ok() && result.pa == 0x3000);
+    assert(result.ok() && result.pa == 0x80003000);
 
     assert(mmu.write_register(0x014, 1));
     assert(mmu.read_register(0x01c) == 1);
@@ -266,7 +274,7 @@ void test_dram_reader_bounds() {
 
 void test_asid_flush() {
     page_table_image_t image;
-    constexpr uint64_t va = 0x0000000000567000ull;
+    constexpr uint64_t va = 0x0000000080567000ull;
     install_4k(image, va, kLeaf, kPteV | kPteR);
     auto mmu = make_mmu(image);
 
@@ -288,8 +296,8 @@ void test_asid_flush() {
 
 void test_global_pdc_rtl_behavior() {
     page_table_image_t image;
-    constexpr uint64_t va0 = 0x0000000000011000ull;
-    constexpr uint64_t va1 = 0x0000000000012000ull;
+    constexpr uint64_t va0 = 0x0000000080011000ull;
+    constexpr uint64_t va1 = 0x0000000080012000ull;
     install_4k(image, va0, kLeaf, kPteV | kPteR,
                kPteV | kPteG, kPteV);
     const uint64_t vpn1 = vpn_of(va1);
@@ -303,10 +311,39 @@ void test_global_pdc_rtl_behavior() {
     assert(result.ok() && !result.global_mapping);
 }
 
+void test_below_dram_identity() {
+    constexpr uint64_t va = 0x1234;
+    page_table_image_t image;
+    install_4k(image, va, kLeaf, kPteV | kPteR);
+    install_4k(image, 0x80001234, kLeaf, kPteV | kPteR);
+
+    // Both relocation mechanisms are armed against va: a page-table
+    // leaf and a relocating full-range FixMap.  Either one alone would
+    // move the access if it reached the engine; the 2 GiB bus boundary
+    // routes it around both.
+    auto mmu = make_mmu(image);
+    mmu->set_fixmap(false, 0x90000000, 0);
+
+    const auto result = mmu->translate(va, mmu_access_type_t::read);
+    assert(result.ok());
+    assert(result.page_size == RVTNG::mmu_page_size_t::page_4k);
+    assert(result.pa == va);
+    assert(image.reads == 0);
+
+    // Control: the same page offset above the base is translated, so
+    // the identity result above is the boundary rule at work, not a
+    // dead page table or FixMap.
+    mmu->set_fixmap(true, 0, 0);
+    const auto ctrl = mmu->translate(0x80001234, mmu_access_type_t::read);
+    assert(ctrl.ok() && ctrl.pa == kLeaf + 0x234);
+    assert(image.reads == 3);
+}
+
 } // namespace
 
 int main() {
     test_fixmap();
+    test_below_dram_identity();
     test_page_sizes();
     test_faults_and_permissions();
     test_negative_cache_and_flush();

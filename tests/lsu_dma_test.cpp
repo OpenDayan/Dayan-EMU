@@ -352,8 +352,8 @@ void test_mmu_dram_translation(std::vector<uint8_t>& uram,
     constexpr uint64_t root = kDramBase;
     constexpr uint64_t l1 = kDramBase + 0x1000;
     constexpr uint64_t l2 = kDramBase + 0x2000;
-    constexpr uint64_t source_va = 0x0000000000401000ull;
-    constexpr uint64_t destination_va = 0x0000000000402000ull;
+    constexpr uint64_t source_va = 0x0000000080401000ull;
+    constexpr uint64_t destination_va = 0x0000000080402000ull;
     constexpr uint64_t source_pa = kDramBase + 0x9000;
     constexpr uint64_t destination_pa = kDramBase + 0xa000;
     constexpr uint64_t pte_v = 1ull << 0;
@@ -431,10 +431,10 @@ void test_mmu_page_crossing_translation(std::vector<uint8_t>& uram,
     // if every page is translated on its own.  All pages share one level-1
     // entry and use distinct level-2 slots (vpn[8:0]), so the leaf PTEs do
     // not collide inside the shared level-2 table.
-    constexpr uint64_t source_va = 0x0000000000401fe0ull;
-    constexpr uint64_t destination_va = 0x0000000000403fe0ull;
-    constexpr uint64_t perm_destination_va = 0x0000000000405fe0ull;
-    constexpr uint64_t unmapped_source_va = 0x0000000000407fe0ull;
+    constexpr uint64_t source_va = 0x0000000080401fe0ull;
+    constexpr uint64_t destination_va = 0x0000000080403fe0ull;
+    constexpr uint64_t perm_destination_va = 0x0000000080405fe0ull;
+    constexpr uint64_t unmapped_source_va = 0x0000000080407fe0ull;
     constexpr uint64_t source_pa = kDramBase + 0x9000;
     constexpr uint64_t source_next_pa = kDramBase + 0x11000;
     constexpr uint64_t destination_pa = kDramBase + 0xa000;
@@ -510,13 +510,15 @@ void test_mmu_translation_before_tensor_window(
     constexpr uint64_t root = kDramBase;
     constexpr uint64_t l1 = kDramBase + 0x1000;
     constexpr uint64_t l2 = kDramBase + 0x2000;
-    // Both VAs are numerically inside core 3's tensor URAM aperture, but map
-    // through Sv39 to ordinary shared DRAM pages.
-    constexpr uint64_t source_va =
+    // The source VA is above the 2 GiB DRAM base and numerically inside
+    // the shared DRAM window, but Sv39 maps it to core 3's remote tensor
+    // URAM window: the transfer can only land there if the window lookup
+    // runs on the translated PA.  The destination stays an ordinary
+    // shared DRAM page.
+    constexpr uint64_t source_va = 0x0000000080401000ull;
+    constexpr uint64_t destination_va = 0x0000000080402000ull;
+    constexpr uint64_t source_pa =
         kTensorUramBase + 3 * kTensorUramStride + 0x1000;
-    constexpr uint64_t destination_va =
-        kTensorUramBase + 3 * kTensorUramStride + 0x2000;
-    constexpr uint64_t source_pa = kDramBase + 0x9000;
     constexpr uint64_t destination_pa = kDramBase + 0xa000;
     constexpr uint64_t pte_v = 1ull << 0;
     constexpr uint64_t pte_r = 1ull << 1;
@@ -544,15 +546,9 @@ void test_mmu_translation_before_tensor_window(
                    pte(destination_pa, pte_v | pte_r | pte_w));
 
     const auto source = pattern(97);
-    const auto wrong_source = pattern(101);
-    std::copy(source.begin(), source.end(),
-              dram.data() + source_pa - kDramBase);
-    std::copy(wrong_source.begin(), wrong_source.end(),
-              uram[3].data() + 0x1000);
+    std::copy(source.begin(), source.end(), uram[3].data() + 0x1000);
     std::fill(dram.data() + destination_pa - kDramBase,
               dram.data() + destination_pa - kDramBase + kRowBytes, 0xa5);
-    std::fill(uram[3].begin() + 0x2000,
-              uram[3].begin() + 0x2000 + kRowBytes, 0x5a);
 
     RVTNG::exec_unit_t parent;
     RVTNG::mmu_t mmu(dram.data(), dram.size());
@@ -567,11 +563,8 @@ void test_mmu_translation_before_tensor_window(
 
     assert(std::equal(source.begin(), source.end(),
                       dram.data() + destination_pa - kDramBase));
-    assert(std::equal(std::begin(wrong_source), std::end(wrong_source),
+    assert(std::equal(source.begin(), source.end(),
                       uram[3].data() + 0x1000));
-    assert(std::all_of(uram[3].begin() + 0x2000,
-                       uram[3].begin() + 0x2000 + kRowBytes,
-                       [](uint8_t value) { return value == 0x5a; }));
 }
 
 void test_context_uram_interrupts(std::vector<uint8_t>& uram,
