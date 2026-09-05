@@ -1,5 +1,6 @@
 #include "utils.hpp"
 #include "rvt64.hpp"
+#include "resource_scheduler.hpp"
 #include "rvt64_helper.hpp"
 #include "swizzle.hpp"
 #include "fputils.hpp"
@@ -38,11 +39,8 @@ namespace RVTNG {
 
     ulong rvt64_t::issue(const rvt_pack_t* inst) {
         uint32_t unit = (inst->inst >> 23) & 0x1f;
-        uint32_t tcsr_id = (inst->inst >> 13) & 0x3ff;
         bool is_rvt64_tcsr = rvt::is_base(inst->inst) &&
-            (unit == RVT_UNIT_MACRO ||
-             (unit == RVT_UNIT_BASE &&
-              (tcsr_id & 0x1f) == RVT_UNIT_MACRO));
+            (unit == RVT_UNIT_MACRO || is_unit_scoreboard(inst->inst, RVT_UNIT_MACRO));
         bool is_rvt64 = ((inst->inst & 0x7f) == 0x3f) | is_rvt64_tcsr;
         if(!is_rvt64) {
             return 0;
@@ -63,6 +61,8 @@ namespace RVTNG {
         parrent->register_issue_callback(this, &rvt64_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);
         this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+        this->register_resource_produce_callback(
+            parrent, &exec_unit_t::resource_produce);
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
 
@@ -211,6 +211,10 @@ namespace RVTNG {
             bool is_macro_sb_bar = rvt_is_base(inst.inst) &&
                 unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_MACRO &&
                 ((inst.inst >> 12) & 0x1) == 1;
+            const bool is_resource_produce = rvt_is_base(inst.inst) &&
+                unit == RVT_UNIT_BASE &&
+                tcsr_id == RESOURCE_PRODUCE_BASE + RVT_UNIT_MACRO &&
+                ((inst.inst >> 12) & 0x1) == 0;
             if(is_macro_tcsr_write | is_macro_tcsr_read) {
                 debugf("MACRO: tcsr read write %d:\n", tcsr_id);
                 const uint8_t logical_group = tcsr_id / 32;
@@ -260,6 +264,10 @@ namespace RVTNG {
                 cmt_pack.data = inst.rd;
                 debugf("MACRO: scoreboard bar %lx:\n", cmt_pack.rd);
                 commit(&cmt_pack);
+                continue;
+            }
+            if(is_resource_produce) {
+                resource_produce(RVT_UNIT_MACRO);
                 continue;
             }
             if(rvt_is_base(inst.inst)) {

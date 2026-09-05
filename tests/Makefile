@@ -2,7 +2,9 @@
 
 BUILD_DIR ?= ../build/tests
 TARGETS := $(BUILD_DIR)/tensor_context_interrupt_test $(BUILD_DIR)/vec_scalar_test $(BUILD_DIR)/vec_unary_test $(BUILD_DIR)/vec_sfu_execution_test $(BUILD_DIR)/vec_convert_test $(BUILD_DIR)/vec_convert_execution_test $(BUILD_DIR)/vec_mul24_test $(BUILD_DIR)/vec_minmax_execution_test $(BUILD_DIR)/vec_channel_stride_test $(BUILD_DIR)/vec_shuffle_test $(BUILD_DIR)/vec_shuffle_execution_test $(BUILD_DIR)/vec_block_retirement_test $(BUILD_DIR)/mmu_test
+TARGETS += $(BUILD_DIR)/resource_scheduler_test $(BUILD_DIR)/resource_integration_test
 CXXFLAGS ?= -std=c++20 -Wall -Wextra
+CPPFLAGS += -I../deps/npu-qemu/include
 
 all: test
 
@@ -23,6 +25,15 @@ $(MMU_CORE_OBJ): ../deps/npu-qemu/hw/riscv/rvtng_mmu_core.c \
 $(BUILD_DIR)/mmu_test: mmu_test.cpp ../emu/mmu.cpp ../include/mmu.hpp $(MMU_CORE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../emu/mmu.cpp $(MMU_CORE_OBJ) $(LDFLAGS) -o $@
+
+$(BUILD_DIR)/resource_scheduler_test: resource_scheduler_test.cpp ../emu/resource_scheduler.cpp ../utils/interrupt.cpp ../include/resource_scheduler.hpp ../include/tensor_context.hpp ../include/interrupt.hpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../emu/resource_scheduler.cpp ../utils/interrupt.cpp $(LDFLAGS) -o $@
+
+RESOURCE_CORE_SOURCES := ../emu/core_context.cpp ../emu/resource_scheduler.cpp ../emu/mmu.cpp ../emu/lsu.cpp ../emu/mat.cpp ../emu/vec.cpp ../rvt64/rvt64.cpp ../utils/interrupt.cpp
+$(BUILD_DIR)/resource_integration_test: resource_integration_test.cpp $(RESOURCE_CORE_SOURCES) $(wildcard ../include/*.hpp) $(MMU_CORE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< $(RESOURCE_CORE_SOURCES) $(MMU_CORE_OBJ) $(LDFLAGS) -pthread -o $@
 
 $(BUILD_DIR)/vec_scalar_test: vec_scalar_test.cpp ../include/vec_scalar.hpp ../include/vec.hpp
 	@mkdir -p $(BUILD_DIR)

@@ -187,7 +187,8 @@ private:
 
 enum class vec_scoreboard_fence_kind_t : uint8_t {
     produce,
-    bar
+    bar,
+    resource_produce
 };
 
 struct vec_scoreboard_fence_t {

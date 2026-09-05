@@ -10,17 +10,24 @@ namespace RVTNG {
 
 using commit_call_back_f = std::function<void(const rvt_commit_t*)>;
 using scoreboard_call_back_f = std::function<void(const uint64_t)>;
+using resource_produce_call_back_f = std::function<void(uint8_t)>;
 using issue_call_back_f = std::function<ulong(const rvt_pack_t*)>;
 
 class exec_unit_t {
 private:
     std::vector<commit_call_back_f> commit_cb;
     std::vector<scoreboard_call_back_f> scoreboard_cb;
+    std::vector<resource_produce_call_back_f> resource_produce_cb;
     std::vector<issue_call_back_f> issue_cb;
 public:
     void scoreboard(const uint64_t value) {
         for (const auto& cb : scoreboard_cb) {
             cb(value);
+        }
+    }
+    void resource_produce(uint8_t unit) {
+        for (const auto& cb : resource_produce_cb) {
+            cb(unit);
         }
     }
     void commit(const rvt_commit_t* inst) {
@@ -53,6 +60,16 @@ public:
     }
     void register_scoreboard_callback(scoreboard_call_back_f method) {
         scoreboard_cb.emplace_back(method);
+    }
+    template<typename T>
+    void register_resource_produce_callback(T* obj,
+                                             void (T::*method)(uint8_t)) {
+        resource_produce_cb.emplace_back(
+            std::bind(method, obj, std::placeholders::_1));
+    }
+    void register_resource_produce_callback(
+        resource_produce_call_back_f method) {
+        resource_produce_cb.emplace_back(std::move(method));
     }
     // 指令发射回调注册
     template<typename T>

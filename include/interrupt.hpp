@@ -46,6 +46,8 @@ enum class interrupt_source_t : uint16_t {
     neovec_decode_error = 32,
     instruction_decode_error = 33,
     neomat_datatype_error = 34,
+    // 对齐默认 RVTNGTop 的源表；裁剪执行单元的 RTL 使用其生成的 interrupts.csv。
+    resource_scheduler_error = 38,
 };
 
 constexpr uint8_t INTERRUPT_TCSR_UNIT = 5;

@@ -3,6 +3,7 @@
 #include "swizzle.hpp"
 #include "utils.hpp"
 #include "vec.hpp"
+#include "resource_scheduler.hpp"
 #include "vec_convert.hpp"
 #include "vec_mul24.hpp"
 #include "vec_scalar.hpp"
@@ -85,11 +86,8 @@ static inline vec_fields_t decode_vec_fields(uint32_t raw)
 static inline bool is_vec_tcsr(const rvt_pack_t& inst)
 {
     uint32_t unit = (inst.inst >> 23) & 0x1f;
-    uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
     return rvt::is_base(static_cast<uint32_t>(inst.inst))
-        && (unit == RVT_UNIT_VEC ||
-            (unit == RVT_UNIT_BASE &&
-             (tcsr_id & 0x1f) == RVT_UNIT_VEC));
+        && (unit == RVT_UNIT_VEC || is_unit_scoreboard(inst.inst, RVT_UNIT_VEC));
 }
 
 static inline bool is_vec_inst(uint64_t inst)
@@ -1324,6 +1322,8 @@ vec_t::vec_t(exec_unit_t* parrent, uint8_t* uram, ulong lane_width,
     parrent->register_issue_callback(this, &vec_t::issue);
     this->register_commit_callback(parrent, &exec_unit_t::commit);
     this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+    this->register_resource_produce_callback(
+        parrent, &exec_unit_t::resource_produce);
     std::fill(std::begin(tcsr), std::end(tcsr), vec_tcsr_t{});
     executer.start();
 }
@@ -1417,6 +1417,10 @@ void vec_t::drain_scoreboard_fences()
                 debugf("VEC: scoreboard produce %lx after %lu blocks\n",
                        fence.data, fence.target);
                 scoreboard(fence.data);
+                return;
+            }
+            if(fence.kind == vec_scoreboard_fence_kind_t::resource_produce) {
+                resource_produce(RVT_UNIT_VEC);
                 return;
             }
 
@@ -1547,6 +1551,11 @@ void vec_t::execute(void)
             && unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 0;
         bool is_vec_sb_bar = rvt::is_base(static_cast<uint32_t>(inst.inst))
             && unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 1;
+        const bool is_resource_produce =
+            rvt::is_base(static_cast<uint32_t>(inst.inst)) &&
+            unit == RVT_UNIT_BASE &&
+            tcsr_id == RESOURCE_PRODUCE_BASE + RVT_UNIT_VEC &&
+            ((inst.inst >> 12) & 0x1) == 0;
 
         if(is_tcsr_write) {
             handle_tcsr_write(inst, tcsr_id, active_context);
@@ -1571,6 +1580,17 @@ void vec_t::execute(void)
             scoreboard_fences.enqueue(vec_scoreboard_fence_t{
                 block_retirement.snapshot(),
                 vec_scoreboard_fence_kind_t::bar,
+                0,
+                inst.timestamp,
+                static_cast<uint8_t>((inst.inst >> 7) & 0x1f)
+            });
+            drain_scoreboard_fences();
+            continue;
+        }
+        if(is_resource_produce) {
+            scoreboard_fences.enqueue(vec_scoreboard_fence_t{
+                block_retirement.snapshot(),
+                vec_scoreboard_fence_kind_t::resource_produce,
                 0,
                 inst.timestamp,
                 static_cast<uint8_t>((inst.inst >> 7) & 0x1f)

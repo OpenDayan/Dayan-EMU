@@ -1,6 +1,7 @@
 #include "utils.hpp"
 #include "common.hpp"
 #include "mat.hpp"
+#include "resource_scheduler.hpp"
 #include "fputils.hpp"
 #include "swizzle.hpp"
 #include "rvt_decoder.hpp"
@@ -520,6 +521,8 @@ mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram,
     parrent->register_issue_callback(this, &mat_t::issue);
     this->register_commit_callback(parrent, &exec_unit_t::commit);
     this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+    this->register_resource_produce_callback(
+        parrent, &exec_unit_t::resource_produce);
     std::memset(this->tcsr, 0, sizeof(this->tcsr));
 }
 
@@ -743,10 +746,8 @@ bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
 
 ulong mat_t::issue(const rvt_pack_t* inst) {
     const uint32_t unit = (inst->inst >> 23) & 0x1f;
-    const uint32_t tcsrId = (inst->inst >> 13) & 0x3ff;
     const bool isMatTcsr = rvt::is_base(inst->inst) &&
-        (unit == RVT_UNIT_MAT ||
-         (unit == RVT_UNIT_BASE && (tcsrId & 0x1f) == RVT_UNIT_MAT));
+        (unit == RVT_UNIT_MAT || is_unit_scoreboard(inst->inst, RVT_UNIT_MAT));
     const bool isMat = IS_RVT_TOP_MAT(inst->inst) || isMatTcsr;
     if (!isMat) {
         return 0;
@@ -779,6 +780,10 @@ void mat_t::execute(void) {
         const bool isMatSbBar = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
             tcsrId == RVT_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 1;
+        const bool isResourceProduce = rvt_is_base(inst.inst) &&
+            unit == RVT_UNIT_BASE &&
+            tcsrId == RESOURCE_PRODUCE_BASE + RVT_UNIT_MAT &&
+            ((inst.inst >> 12) & 0x1) == 0;
 
         if (isMatTcsrWrite || isMatTcsrRead) {
             debugf("MAT: tcsr read/write %u:\n", tcsrId);
@@ -830,6 +835,10 @@ void mat_t::execute(void) {
             cmtPack.data = inst.rd;
             debugf("MAT: scoreboard bar %lx:\n", cmtPack.rd);
             commit(&cmtPack);
+            continue;
+        }
+        if (isResourceProduce) {
+            resource_produce(RVT_UNIT_MAT);
             continue;
         }
 

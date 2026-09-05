@@ -12,6 +12,7 @@
 #include "thread_safe_queue.h"
 #include "tensor_context.hpp"
 #include "interrupt.hpp"
+#include "resource_scheduler.hpp"
 
 // Core context class
 class core_context_t {
@@ -26,7 +27,8 @@ public:
     std::unique_ptr<RVTNG::rvt64_t> legacy;
     std::unique_ptr<RVTNG::tensor_context_t> tensor_context;
     std::unique_ptr<RVTNG::interrupt_controller_t> interrupts;
-    std::unique_ptr<RVTNG::MPMCQueue<uint64_t, 32>> scoreboard;
+    std::unique_ptr<RVTNG::MPMCQueue<RVTNG::scoreboard_entry_t, 32>> scoreboard;
+    std::unique_ptr<RVTNG::resource_scheduler_t> resource_scheduler;
     std::thread lsu_exec_thread;
     std::thread mat_exec_thread;
     std::thread vec_exec_thread;
@@ -37,6 +39,7 @@ public:
     core_context_t(int id, int fdMsg, std::mutex& msgMutex, uint8_t* dram,
                    uint8_t* uram, uint8_t *const *cluster_urams,
                    size_t cluster_core_count,
+                   RVTNG::resource_cluster_t& resource_cluster,
                    size_t dram_size = RVTNG::MMU_DEFAULT_DRAM_SIZE,
                    uint64_t dram_base = RVTNG::MMU_DRAM_BASE);
 

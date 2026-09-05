@@ -98,6 +98,8 @@ bool run_case(bool dynamic, uint64_t amount)
 int main()
 {
     if(!run_case(false, 0x00) || !run_case(true, 0x04)
+       || !run_case(false, 0x10) || !run_case(true, 0x11)
+       || !run_case(false, 0x12) || !run_case(true, 0x13)
        || !run_case(false, 0x20) || !run_case(true, 0x24)
        || !run_case(false, 0x25) || !run_case(true, 0x27)) {
         return 1;

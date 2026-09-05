@@ -6,6 +6,7 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
                                uint8_t* dram, uint8_t* uram,
                                uint8_t *const *cluster_urams,
                                size_t cluster_core_count,
+                               RVTNG::resource_cluster_t& resource_cluster,
                                size_t dram_size,
                                uint64_t dram_base)
     : core_id(id), uram(uram), running(true) {
@@ -26,12 +27,16 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
     });
 
     // Create Scoreboard queue
-    scoreboard = std::make_unique<RVTNG::MPMCQueue<uint64_t, 32>>();
+    scoreboard = std::make_unique<
+        RVTNG::MPMCQueue<RVTNG::scoreboard_entry_t, 32>>();
     top->register_scoreboard_callback([&sb = *scoreboard](const uint64_t entry) {
-        sb.enqueue(entry);
+        sb.enqueue(RVTNG::scoreboard_entry_t{entry, 0});
     });
-
-    top->register_issue_callback(this, &core_context_t::issue_global);
+    resource_scheduler = std::make_unique<RVTNG::resource_scheduler_t>(
+        resource_cluster, *scoreboard, interrupts.get());
+    top->register_resource_produce_callback(
+        resource_scheduler.get(),
+        &RVTNG::resource_scheduler_t::complete_produce);
 
     // Create one MMU/cache context per core.  The PTW reader observes the
     // shared DRAM image; reset defaults leave the full-range identity FixMap
@@ -54,20 +59,27 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
                                               tensor_context.get(), interrupts.get());
 
     // Register Scoreboard Issue callback
-    top->register_issue_callback([top_ptr = top.get(), &sb = *scoreboard](const rvt_pack_t* inst) {
+    top->register_issue_callback(
+        [top_ptr = top.get(), &sb = *scoreboard,
+         scheduler = resource_scheduler.get()](const rvt_pack_t* inst) {
         const uint32_t unit = (inst->inst >> 23) & 0x0f;
         const uint32_t address = (inst->inst >> 13) & 0x3ff;
         const bool is_sb = rvt::is_base(static_cast<uint32_t>(inst->inst)) &&
-            unit == RVT_UNIT_BASE && (address & 0x1f) == RVT_UNIT_BASE;
+            unit == RVT_UNIT_BASE && address == RVT_UNIT_BASE;
         if(!is_sb) return 0ul;
         if(inst->inst & 0b1000000000000) {
             rvt_commit_t cmt_pack;
             cmt_pack.timestamp = inst->timestamp;
             cmt_pack.rd = (inst->inst >> 7) & 0x1f;
             auto p = sb.try_dequeue();
-            if(p != std::nullopt) debugf("Scoreboard: empty:%x data:%lx!\n", p == std::nullopt, p.value_or(0ul));
-            cmt_pack.data = p.value_or(0ul);
+            if(p != std::nullopt) {
+                debugf("Scoreboard: empty:0 data:%lx!\n", p->token);
+            }
+            cmt_pack.data = p ? p->token : 0;
             top_ptr->commit(&cmt_pack);
+            if(p) {
+                scheduler->output_popped(*p);
+            }
         } else {
             // sb.enqueue(entry);
             // DO NOTHING
@@ -85,7 +97,11 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
 
 ulong core_context_t::issue_global(const rvt_pack_t* inst) {
     if(RVTNG::is_context_write(inst->inst)) {
-        tensor_context->write(inst->rd);
+        const uint16_t address = (inst->inst >> 13) & 0x3ff;
+        if(!tensor_context->write(address, inst->rd)) {
+            interrupts->raise(RVTNG::interrupt_source_t::resource_scheduler_error, address);
+            return 1;
+        }
         const auto context = tensor_context->snapshot();
         lsu->enqueue_context(*inst, context);
         mat->enqueue_context(*inst, context);
@@ -95,9 +111,10 @@ ulong core_context_t::issue_global(const rvt_pack_t* inst) {
     }
 
     if(RVTNG::is_context_read(inst->inst)) {
+        const uint16_t address = (inst->inst >> 13) & 0x3ff;
         rvt_commit_t response{};
         response.rd = (inst->inst >> 7) & 0x1f;
-        response.data = tensor_context->read();
+        response.data = tensor_context->read(address);
         response.timestamp = inst->timestamp;
         top->commit(&response);
         return 1;
@@ -116,6 +133,29 @@ ulong core_context_t::issue_global(const rvt_pack_t* inst) {
             interrupts->write(address, inst->rd);
         }
         return 1;
+    }
+
+    if(rvt::is_base(static_cast<uint32_t>(inst->inst)) &&
+       ((inst->inst >> 23) & 0x0f) == RVT_UNIT_BASE) {
+        const uint16_t address = (inst->inst >> 13) & 0x3ff;
+        if(resource_scheduler->handles(address)) {
+            const bool read = ((inst->inst >> 12) & 1) != 0;
+            bool accepted = true;
+            if(read) {
+                rvt_commit_t response{};
+                response.rd = (inst->inst >> 7) & 0x1f;
+                response.data = resource_scheduler->read(address);
+                response.timestamp = inst->timestamp;
+                top->commit(&response);
+            } else {
+                accepted = resource_scheduler->write(address, inst->rd,
+                                                     tensor_context->snapshot());
+            }
+            const bool deferred_produce = accepted && !read &&
+                address >= RVTNG::RESOURCE_PRODUCE_BASE &&
+                address < RVTNG::RESOURCE_PRODUCE_BASE + 16;
+            return deferred_produce ? 0 : 1;
+        }
     }
 
     return 0;
@@ -150,7 +190,12 @@ void core_context_t::fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstM
         count = backend_instruction_fetch(fdInstReq, fdInstRsp, core_id, &inst);
     }
     if(count) {
-        ulong v = top->issue(&inst);
+        // 全局 CSR 先处理一次；只有合法 Resource Produce 写才继续进入目标单元队列。
+        // 非法写不得产生完成事件，否则会错配该单元更早登记的 Produce 描述符。
+        ulong v = issue_global(&inst);
+        if(v == 0) {
+            v = top->issue(&inst);
+        }
         if(v == 0) {
             interrupts->raise(RVTNG::interrupt_source_t::instruction_decode_error,
                               static_cast<uint32_t>(inst.inst));

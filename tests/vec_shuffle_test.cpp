@@ -86,6 +86,38 @@ int main()
         }
     }
 
+    for(uint64_t ctrl = 0x10; ctrl <= 0x13; ++ctrl) {
+        const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
+        const size_t block_size = size_t{1} << (ctrl - 0x0f);
+        for(size_t lane = 0; lane < dst.size(); ++lane) {
+            const size_t block = lane / (2 * block_size);
+            const size_t block_lane = lane % block_size;
+            if(!check(dst[lane] == src[block * block_size + block_lane],
+                      "block scatter mapping")) {
+                return 1;
+            }
+        }
+
+        const auto high_bits_dst = RVTNG::execute_vec_shuffle_compress(
+            src, ctrl | 0x40);
+        if(!check(high_bits_dst == dst,
+                  "block scatter ignores parameter bits above bit 5")) {
+            return 1;
+        }
+    }
+
+    const auto block4 = RVTNG::execute_vec_shuffle_compress(src, 0x11);
+    for(size_t lane = 0; lane < 4; ++lane) {
+        if(!check(block4[lane] == src[lane],
+                  "block-4 first packed block front copy")
+            || !check(block4[lane + 4] == src[lane],
+                      "block-4 first packed block duplicate")
+            || !check(block4[lane + 8] == src[lane + 4],
+                      "block-4 second packed block front copy")) {
+            return 1;
+        }
+    }
+
     for(uint64_t ctrl = 0x25; ctrl <= 0x27; ++ctrl) {
         const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
         const size_t numerator = ctrl - 0x20;

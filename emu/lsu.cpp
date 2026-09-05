@@ -1,6 +1,7 @@
 #include "utils.hpp"
 #include "common.hpp"
 #include "lsu.hpp"
+#include "resource_scheduler.hpp"
 #include "swizzle.hpp"
 #include "rvt_decoder.hpp"
 #include <algorithm>
@@ -258,6 +259,8 @@ namespace RVTNG {
         parrent->register_issue_callback(this, &lsu_t::issue);
         this->register_commit_callback(parrent, &exec_unit_t::commit);
         this->register_scoreboard_callback(parrent, &exec_unit_t::scoreboard);
+        this->register_resource_produce_callback(
+            parrent, &exec_unit_t::resource_produce);
         lsu_buffer = new uint8_t[512 * 64];
         memset(this->tcsr, 0, sizeof(this->tcsr));
     }
@@ -396,11 +399,8 @@ namespace RVTNG {
 
     ulong lsu_t::issue(const rvt_pack_t* inst) {
         uint32_t unit = (inst->inst >> 23) & 0x1f;
-        uint32_t tcsr_id = (inst->inst >> 13) & 0x3ff;
         bool is_dma_tcsr = rvt::is_base(inst->inst) &&
-            (unit == RVT_UNIT_LSU ||
-             (unit == RVT_UNIT_BASE &&
-              (tcsr_id & 0x1f) == RVT_UNIT_LSU));
+            (unit == RVT_UNIT_LSU || is_unit_scoreboard(inst->inst, RVT_UNIT_LSU));
         bool is_dma = rvt::is_lsu(inst->inst) | is_dma_tcsr;
         if(!is_dma) {
             // ignore
@@ -434,6 +434,10 @@ namespace RVTNG {
             bool is_dma_sb_bar = rvt_is_base(inst.inst) &&
                 unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU &&
                 ((inst.inst >> 12) & 0x1) == 1;
+            const bool is_resource_produce = rvt_is_base(inst.inst) &&
+                unit == RVT_UNIT_BASE &&
+                tcsr_id == RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU &&
+                ((inst.inst >> 12) & 0x1) == 0;
             if(is_dma_tcsr_write || is_dma_tcsr_read) {
                 debugf("LSU: tcsr read write %d:\n", tcsr_id);
                 const uint8_t logical_group = tcsr_id / 32;
@@ -489,6 +493,10 @@ namespace RVTNG {
                 cmt_pack.data = inst.rd;
                 debugf("LSU: scoreboard bar %lx:\n", cmt_pack.rd);
                 commit(&cmt_pack);
+                continue;
+            }
+            if(is_resource_produce) {
+                resource_produce(RVT_UNIT_LSU);
                 continue;
             }
             if(!IS_RVT_LSU_DMA(inst.inst)) {

@@ -19,6 +19,15 @@ inline std::array<uint32_t, 64> execute_vec_shuffle_compress(
         }
         return dst;
     }
+    if(ctrl >= 0x10 && ctrl <= 0x13) {
+        const size_t block_size = size_t{1} << (ctrl - 0x0f);
+        for(size_t lane = 0; lane < dst.size(); ++lane) {
+            const size_t block = lane / (2 * block_size);
+            const size_t block_lane = lane % block_size;
+            dst[lane] = src[block * block_size + block_lane];
+        }
+        return dst;
+    }
     if(ctrl >= 0x20 && ctrl <= 0x24) {
         const size_t group_size = size_t{1} << ((ctrl & 0x1f) + 1);
         for(size_t lane = 0; lane < dst.size(); ++lane) {

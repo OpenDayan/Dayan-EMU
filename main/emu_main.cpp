@@ -261,12 +261,13 @@ int main(int argc, char** argv) {
     debugf("Main: QEMU Ready!\n");
     
     // Create all cores
+    RVTNG::resource_cluster_t resource_cluster;
     std::vector<std::unique_ptr<core_context_t>> cores;
     for(int i = 0; i < num_cores; i++) {
         try {
             cores.push_back(std::make_unique<core_context_t>(
                 i, fdMsg, fdMsgMutex, dram, uram[i], &uram[0],
-                (size_t)num_cores));
+                (size_t)num_cores, resource_cluster));
         } catch(const std::exception& e) {
             fprintf(stderr, "Error: Failed to create core %d: %s\n", i, e.what());
             return 1;

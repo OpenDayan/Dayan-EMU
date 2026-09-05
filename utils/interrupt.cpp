@@ -51,6 +51,10 @@ constexpr uint64_t kCountMask = (uint64_t{1} << 48) - 1;
 
 std::string_view interrupt_source_name(interrupt_source_t source)
 {
+    // Resource 使用默认 RTL 的编号，旧单元的名称仍按原有连续编号表解析。
+    if(source == interrupt_source_t::resource_scheduler_error) {
+        return "resource_scheduler_error";
+    }
     const size_t index = static_cast<size_t>(source);
     return index < kInterruptSourceNames.size()
         ? kInterruptSourceNames[index] : std::string_view{"unknown"};
