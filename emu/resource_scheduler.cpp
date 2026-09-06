@@ -270,7 +270,7 @@ bool resource_scheduler_t::wait_ready_locked(
            election.phase == wait.election_phase) {
             role = resource_role_t::producer;
         } else if(election.state == resource_state_t::ready &&
-                  election.phase != wait.election_phase) {
+                  election.phase == wait.election_phase) {
             role = resource_role_t::consumer;
         } else {
             return false;
@@ -323,7 +323,6 @@ bool resource_scheduler_t::reserve_wait_locked(
             }
             resource_entry_t& resource = entry_locked(shared, index);
             resource.state = resource_state_t::busy;
-            resource.phase = !resource.phase;
         }
     };
     reserve_mask(wait.wait_free.local, false);
@@ -399,6 +398,7 @@ bool resource_scheduler_t::complete_produce_locked(
             resource_entry_t& input = entry_locked(shared, index);
             if(--input.consumers == 0) {
                 input.state = resource_state_t::free;
+                input.phase = !input.phase;
             }
         }
     };

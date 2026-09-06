@@ -57,6 +57,8 @@ enum class resource_state_t : uint8_t {
 struct resource_entry_t {
     resource_state_t state = resource_state_t::free;
     uint8_t consumers = 0;
+    // Lifecycle generation: stable from FREE through BUSY/READY, toggled on
+    // the final READY -> FREE consumption.
     bool phase = false;
 };
 

@@ -176,6 +176,66 @@ void test_election_roles()
            static_cast<uint64_t>(RVTNG::resource_role_t::consumer));
 }
 
+void test_election_phase_lifecycle()
+{
+    RVTNG::resource_cluster_t cluster;
+    queue_t producer_output;
+    queue_t consumer_output;
+    queue_t ready_consumer_output;
+    RVTNG::resource_scheduler_t producer(cluster, producer_output);
+    RVTNG::resource_scheduler_t consumer(cluster, consumer_output);
+    RVTNG::resource_scheduler_t ready_consumer(cluster, ready_consumer_output);
+    const auto context = RVTNG::tensor_context_snapshot_t::defaults();
+    const uint64_t elected = uint64_t{1} << 32;
+
+    write_wait(producer, context, elected, 0, 0x350);
+    assert(pop(producer_output, producer).token == 0x350);
+
+    // A waiter arriving after FREE -> BUSY still observes this lifecycle and
+    // must be elected as a consumer once the resource becomes READY.
+    write_wait(consumer, context, elected, elected, 0x351);
+    assert(consumer_output.empty());
+    producer.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                   (uint64_t{2} << 8) | 32, context);
+    producer.complete_produce(1);
+    const auto elected_consumer = pop(consumer_output, consumer);
+    assert(elected_consumer.token == 0x351);
+    assert(elected_consumer.extension ==
+           static_cast<uint64_t>(RVTNG::resource_role_t::consumer));
+
+    write_wait(ready_consumer, context, elected, elected, 0x352);
+    const auto ready_elected_consumer = pop(ready_consumer_output,
+                                             ready_consumer);
+    assert(ready_elected_consumer.token == 0x352);
+    assert(ready_elected_consumer.extension ==
+           static_cast<uint64_t>(RVTNG::resource_role_t::consumer));
+
+    for(uint64_t i = 0; i < 32; ++i) {
+        assert(consumer_output.try_enqueue({0x4000 + i, 0}));
+    }
+    write_wait(consumer, context, elected, elected, 0x353);
+
+    for(size_t i = 0; i < 2; ++i) {
+        producer.write(RVTNG::RESOURCE_CONSUME_READY, elected, context);
+        producer.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                       RVTNG::RESOURCE_NO_OUTPUT, context);
+        producer.complete_produce(1);
+    }
+
+    // The final consumption changes the lifecycle.  A waiter that missed the
+    // READY window must not claim the now-FREE resource as a new producer.
+    for(size_t i = 0; i < 32; ++i) {
+        assert(pop(consumer_output, consumer).token == 0x4000 + i);
+    }
+    assert(consumer_output.empty());
+
+    write_wait(consumer, context, elected, elected, 0x354);
+    const auto next_producer = pop(consumer_output, consumer);
+    assert(next_producer.token == 0x354);
+    assert(next_producer.extension ==
+           static_cast<uint64_t>(RVTNG::resource_role_t::producer));
+}
+
 void test_invalid_context_window()
 {
     RVTNG::resource_cluster_t cluster;
@@ -253,6 +313,7 @@ int main()
     test_shared_resource_flow();
     test_terminal_consume();
     test_election_roles();
+    test_election_phase_lifecycle();
     test_invalid_context_window();
     test_csr_acceptance_and_init();
     test_scoreboard_decode();
