@@ -22,6 +22,7 @@ constexpr uint16_t RESOURCE_WAIT = 0x033;
 constexpr uint16_t RESOURCE_CONSUME_READY = 0x034;
 constexpr uint16_t LOCAL_RESOURCE_INIT = 0x035;
 constexpr uint16_t RESOURCE_TOKEN_EXT = 0x036;
+constexpr uint16_t RESOURCE_WAIT_PHASE = 0x037;
 constexpr size_t RESOURCE_WAIT_FIFO_CAPACITY = 64;
 constexpr size_t RESOURCE_ISSUE_QUEUE_CAPACITY = 16;
 
@@ -46,6 +47,8 @@ struct scoreboard_entry_t {
     uint64_t token = 0;
     uint64_t extension = 0;
     bool resource = false;
+    uint32_t local_resources = 0;
+    uint32_t shared_resources = 0;
 };
 
 enum class resource_state_t : uint8_t {
@@ -68,6 +71,7 @@ class resource_cluster_t {
 public:
     void add(resource_scheduler_t* scheduler);
     void remove(resource_scheduler_t* scheduler);
+    bool clear(uint32_t mask);
 
 private:
     friend class resource_scheduler_t;
@@ -105,6 +109,7 @@ private:
     struct wait_entry_t {
         mapped_mask_t wait_free;
         mapped_mask_t wait_ready;
+        mapped_mask_t phase;
         bool election_shared = false;
         uint8_t election_index = 0;
         bool election_phase = false;
@@ -140,6 +145,7 @@ private:
     void refill_issue_locked();
     void schedule_locked();
     void raise_locked(uint16_t address) const;
+    bool in_use_locked(uint32_t mask, bool shared) const;
     resource_entry_t& entry_locked(bool shared, uint8_t index);
     const resource_entry_t& entry_locked(bool shared, uint8_t index) const;
 
@@ -153,10 +159,13 @@ private:
     uint64_t wait_free_ = 0;
     uint64_t wait_ready_ = 0;
     uint64_t wait_qos_ = 0;
+    uint64_t wait_phase_ = 0;
     uint64_t consume_ready_ = 0;
     uint64_t token_ext_ = 0;
     uint64_t next_age_ = 0;
     size_t pending_tokens_ = 0;
+    std::array<size_t, RESOURCE_TABLE_ENTRIES> local_tokens_{};
+    std::array<size_t, RESOURCE_TABLE_ENTRIES> shared_tokens_{};
 };
 
 } // namespace RVTNG

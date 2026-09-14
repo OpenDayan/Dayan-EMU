@@ -84,6 +84,12 @@ static float convert_bf16(const uint8_t* uram, uint64_t rowBase,
         uram, rowBase + index * sizeof(uint16_t), swizzleMBS));
 }
 
+static float convert_tf32(const uint8_t* uram, uint64_t rowBase,
+                          uint64_t index, uint64_t swizzleMBS) {
+    return TF32Clip(load_uram<float>(
+        uram, rowBase + index * sizeof(float), swizzleMBS));
+}
+
 static float convert_fp16(const uint8_t* uram, uint64_t rowBase,
                           uint64_t index, uint64_t swizzleMBS) {
     const uint16_t raw = load_uram<uint16_t>(
@@ -180,6 +186,9 @@ static std::optional<mat_operand_format_t> decode_operand_format(
         return mat_operand_format_t{
             convert_uint8, operationClass, 8, usesScale,
             usesScale ? "MXU8" : "U8"};
+    case RVT_MAT_TYPE_TF32:
+        return mat_operand_format_t{
+            convert_tf32, operationClass, 32, false, "TF32"};
     case RVT_MAT_TYPE_FP16:
         return mat_operand_format_t{
             convert_fp16, operationClass, 16, false, "FP16"};
@@ -199,8 +208,7 @@ static std::optional<mat_operand_format_t> decode_operand_format(
             convert_uint4, operationClass, 4, usesScale,
             usesScale ? "MXU4" : "U4"};
     default:
-        // TF16 and TF32 are architecturally allocated, but their external
-        // storage/container conversion paths are not implemented here yet.
+        // TF16 storage conversion is not implemented yet.
         return std::nullopt;
     }
 }

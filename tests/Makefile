@@ -3,6 +3,7 @@
 BUILD_DIR ?= ../build/tests
 TARGETS := $(BUILD_DIR)/tensor_context_interrupt_test $(BUILD_DIR)/vec_scalar_test $(BUILD_DIR)/vec_unary_test $(BUILD_DIR)/vec_sfu_execution_test $(BUILD_DIR)/vec_convert_test $(BUILD_DIR)/vec_convert_execution_test $(BUILD_DIR)/vec_mul24_test $(BUILD_DIR)/vec_minmax_execution_test $(BUILD_DIR)/vec_channel_stride_test $(BUILD_DIR)/vec_shuffle_test $(BUILD_DIR)/vec_shuffle_execution_test $(BUILD_DIR)/vec_block_retirement_test $(BUILD_DIR)/mmu_test
 TARGETS += $(BUILD_DIR)/resource_scheduler_test $(BUILD_DIR)/resource_integration_test
+TARGETS += $(BUILD_DIR)/macro_address_validation_test
 CXXFLAGS ?= -std=c++20 -Wall -Wextra
 CPPFLAGS += -I../deps/npu-qemu/include
 
@@ -38,6 +39,10 @@ $(BUILD_DIR)/resource_integration_test: resource_integration_test.cpp $(RESOURCE
 $(BUILD_DIR)/vec_scalar_test: vec_scalar_test.cpp ../include/vec_scalar.hpp ../include/vec.hpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< -o $@
+
+$(BUILD_DIR)/macro_address_validation_test: macro_address_validation_test.cpp ../rvt64/rvt64.cpp ../utils/interrupt.cpp $(wildcard ../include/*.hpp)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../rvt64/rvt64.cpp ../utils/interrupt.cpp $(LDFLAGS) -pthread -o $@
 
 $(BUILD_DIR)/vec_block_retirement_test: vec_block_retirement_test.cpp ../include/vec.hpp
 	@mkdir -p $(BUILD_DIR)

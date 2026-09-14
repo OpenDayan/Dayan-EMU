@@ -8,6 +8,7 @@
 #include "swizzle.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -86,6 +87,16 @@ std::vector<uint8_t> pack_u16(std::initializer_list<uint16_t> values) {
     for (const uint16_t value : values) {
         packed[index * 2] = static_cast<uint8_t>(value);
         packed[index * 2 + 1] = static_cast<uint8_t>(value >> 8);
+        ++index;
+    }
+    return packed;
+}
+
+std::vector<uint8_t> pack_u32(std::initializer_list<uint32_t> values) {
+    std::vector<uint8_t> packed(values.size() * sizeof(uint32_t));
+    size_t index = 0;
+    for (const uint32_t value : values) {
+        std::memcpy(packed.data() + index * sizeof(uint32_t), &value, sizeof(value));
         ++index;
     }
     return packed;
@@ -409,6 +420,88 @@ void test_paired_16bit_formats() {
                  1.0f);
 }
 
+void test_tf32() {
+    const uint32_t conversions[][2] = {
+        {0x00000000, 0x00000000}, {0x80000000, 0x80000000},
+        {0x3f801fff, 0x3f800000}, {0xbf801fff, 0xbf800000},
+        {0x3f802000, 0x3f802000}, {0x3fffffff, 0x3fffe000},
+        {0x00001fff, 0x00000000}, {0x00002000, 0x00002000},
+        {0x80001fff, 0x80000000}, {0x007fffff, 0x007fe000},
+        {0x7f7fffff, 0x7f7fe000}, {0x7f800000, 0x7f800000},
+        {0xff800000, 0xff800000}, {0x7f800001, 0x7fc00000},
+    };
+    for (const auto& entry : conversions) {
+        const float actual = TF32Clip(std::bit_cast<float>(entry[0]));
+        assert(std::bit_cast<uint32_t>(actual) == entry[1]);
+    }
+
+    const auto one = pack_u32({0x3f800000});
+    {
+        constexpr uint16_t type = paired_type(RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_TF32);
+        expect_close("TF32 truncates low fraction", run_one(type, 1, pack_u32({0x3f801fff}), one), 1.0f, 0.0f);
+        expect_close("TF32 retains ten fraction bits", run_one(type, 1, pack_u32({0x3f802000}), one), 1.0f + 1.0f / 1024, 0.0f);
+        expect_close("TF32 negative truncation", run_one(type, 1, pack_u32({0xbf801fff}), one), -1.0f, 0.0f);
+        expect_close("TF32 full exponent", run_one(type, 1, pack_u32({0x00800000}), pack_u32({0x7d800000})), 0.25f, 0.0f);
+        const float initialC = 1.0f / (1 << 20);
+        expect_close("TF32 FP32 accumulation", run_one(type, 1, one, one, {}, {}, initialC, true), 1.0f + initialC, 0.0f);
+        const float inf = run_one(type, 1, pack_u32({0x7f800000}), one);
+        assert(std::bit_cast<uint32_t>(inf) == 0x7f800000);
+        const float nan = run_one(type, 1, pack_u32({0x7f800001}), one);
+        assert((std::bit_cast<uint32_t>(nan) & 0x7fffffffu) > 0x7f800000u);
+    }
+
+    constexpr uint64_t swizzle = (uint64_t{7} << 16) | (uint64_t{2} << 8) | 3;
+    for (const uint8_t aType : {RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16}) {
+        for (const uint8_t bType : {RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16}) {
+            if (aType != RVT_MAT_TYPE_TF32 && bType != RVT_MAT_TYPE_TF32) {
+                continue;
+            }
+            for (const uint64_t k : {127, 128, 129}) {
+                RVTNG::mat_tcsr_t control{};
+                control.m = 2;
+                control.n = 4;
+                control.k = k - 1;
+                control.aStride = align32(k * (aType == RVT_MAT_TYPE_TF32 ? 4 : 2)) + 32;
+                control.bStride = align32(k * (bType == RVT_MAT_TYPE_TF32 ? 4 : 2)) + 64;
+                control.cStride = 64;
+                control.aSwizzleMBS = swizzle;
+                control.bSwizzleMBS = swizzle;
+                control.cSwizzleMBS = swizzle;
+                control.dataType = paired_type(aType, bType);
+                std::vector<uint8_t> memory(kUramSize, 0xa5);
+                const auto write = [&](uint64_t base, uint64_t stride, uint8_t type, uint64_t rows, int sign) {
+                    for (uint64_t row = 0; row < rows; ++row) {
+                        for (uint64_t inner = 0; inner < k; ++inner) {
+                            const float value = sign * float(int((row * 3 + inner) % 13) - 6) / 16;
+                            if (type == RVT_MAT_TYPE_TF32) {
+                                store_swizzled(memory, base + row * stride + inner * 4, swizzle, value);
+                            } else {
+                                const uint16_t raw = type == RVT_MAT_TYPE_BF16 ? FP32ToBF16(value) : FP32ToFP16(value);
+                                store_swizzled(memory, base + row * stride + inner * 2, swizzle, raw);
+                            }
+                        }
+                    }
+                };
+                write(kABase, control.aStride, aType, 3, 1);
+                write(kBBase, control.bStride, bType, 5, -1);
+                for (const bool acc : {false, true}) {
+                    assert(RVTNG::execute_matmul(memory.data(), control, kABase, kBBase, kCBase, 0, 0, acc));
+                    for (uint64_t m = 0; m < 3; ++m) {
+                        for (uint64_t n = 0; n < 5; ++n) {
+                            float expected = 0;
+                            for (uint64_t inner = 0; inner < k; ++inner) {
+                                expected += -float(int((m * 3 + inner) % 13) - 6) * float(int((n * 3 + inner) % 13) - 6) / 256;
+                            }
+                            expect_close("TF32 mixed strided swizzled MM/MMA", load_swizzled<float>(memory, kCBase + m * control.cStride + n * 4, swizzle), expected * (acc ? 2 : 1), 0.0f);
+                        }
+                        assert(load_swizzled<uint32_t>(memory, kCBase + m * control.cStride + 5 * 4, swizzle) == 0xa5a5a5a5u);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void test_fp8() {
     expect_close("FP8 E4M3",
                  run_one(RVT_TYPE_FP8_E4M3, 2,
@@ -676,7 +769,9 @@ void test_unsupported_type() {
     };
 
     rejected(0xff);
-    rejected(RVT_TYPE_FP32); // allocated legacy type, unsupported by NeoMat
+    rejected(RVT_TYPE_FP32);
+    rejected(paired_type(RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_S8));
+    rejected(paired_type(RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_BF16, true, false));
     rejected(RVT_TYPE_RTL_S8);
     rejected(uint64_t{0x100} | RVT_TYPE_BF16);
     rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_E4M3));
@@ -694,6 +789,7 @@ int main() {
     test_scalar_decoders();
     test_bf16_and_fp16();
     test_paired_16bit_formats();
+    test_tf32();
     test_bf16_conv2d();
     test_bf16_conv2d_layout();
     test_paired_scaled_conv2d();

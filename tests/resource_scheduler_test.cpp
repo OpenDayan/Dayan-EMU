@@ -29,6 +29,219 @@ void write_wait(RVTNG::resource_scheduler_t& scheduler,
     scheduler.write(RVTNG::RESOURCE_WAIT, token, context);
 }
 
+void write_phase_wait(RVTNG::resource_scheduler_t& scheduler,
+                      const RVTNG::tensor_context_snapshot_t& context,
+                      uint64_t free, uint64_t ready, uint64_t phases,
+                      uint64_t token)
+{
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT_PHASE, phases, context));
+    write_wait(scheduler, context, free, ready, token);
+    assert(scheduler.read(RVTNG::RESOURCE_WAIT_PHASE) == 0);
+}
+
+void test_phase_ready_generations(bool shared)
+{
+    RVTNG::resource_cluster_t cluster;
+    queue_t producer_output, peer_output;
+    RVTNG::interrupt_controller_t interrupts;
+    RVTNG::resource_scheduler_t producer(cluster, producer_output, &interrupts);
+    RVTNG::resource_scheduler_t peer(cluster, peer_output, &interrupts);
+    auto& consumer = shared ? peer : producer;
+    auto& consumer_output = shared ? peer_output : producer_output;
+    const auto context = RVTNG::tensor_context_snapshot_t::defaults();
+    const uint8_t index = shared ? 35 : 3;
+    const uint64_t mask = uint64_t{1} << index;
+    const uint16_t produce = RVTNG::RESOURCE_PRODUCE_BASE + 2;
+
+    write_wait(producer, context, mask, 0, 0x800);
+    assert(pop(producer_output, producer).token == 0x800);
+    assert(producer.write(produce, (2 << 8) | index, context));
+    producer.complete_produce(2);
+    for(unsigned generation = 0; generation < 4; ++generation) {
+        const uint64_t phase = generation & 1 ? mask : 0;
+        write_phase_wait(consumer, context, 0, mask, phase ^ mask, 0x810 + generation);
+        assert(consumer_output.empty());
+
+        // Both queued consumes still belong to the old READY generation.
+        for(unsigned use = 0; use < 2; ++use) {
+            assert(producer.write(RVTNG::RESOURCE_CONSUME_READY, mask, context));
+            assert(producer.write(produce, RVTNG::RESOURCE_NO_OUTPUT, context));
+            assert(consumer_output.empty());
+            producer.complete_produce(2);
+            assert(consumer_output.empty());
+        }
+        write_wait(producer, context, mask, 0, 0x820 + generation);
+        assert(pop(producer_output, producer).token == 0x820 + generation);
+        assert(producer.write(produce, (2 << 8) | index, context));
+        assert(consumer_output.empty());
+        producer.complete_produce(2);
+        assert(pop(consumer_output, consumer).token == 0x810 + generation);
+    }
+    assert(!interrupts.pending());
+}
+
+void test_phase_context_mapping()
+{
+    RVTNG::resource_cluster_t cluster;
+    queue_t output;
+    RVTNG::interrupt_controller_t interrupts;
+    RVTNG::resource_scheduler_t scheduler(cluster, output, &interrupts);
+    auto context = RVTNG::tensor_context_snapshot_t::defaults();
+    context.local_resources = {2, 5};
+    context.shared_resources = {1, 9};
+    const uint64_t shared = uint64_t{1} << 32;
+
+    // Local input stays at phase zero; shared input advances to phase one.
+    write_wait(scheduler, context, 1 | shared, 0, 0x900);
+    assert(pop(output, scheduler).token == 0x900);
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1, 0x100, context));
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1, 0x120, context));
+    scheduler.complete_produce(1);
+    scheduler.complete_produce(1);
+    write_phase_wait(scheduler, context, 2, 1 | shared, shared, 0x901);
+    assert(output.empty());
+
+    // Later staging writes and another Context must not alter the queued wait.
+    auto other = context;
+    other.local_resources.base = 20;
+    other.shared_resources.base = 25;
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT_PHASE, 1, other));
+    assert(scheduler.write(RVTNG::RESOURCE_CONSUME_READY, shared, context));
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                           RVTNG::RESOURCE_NO_OUTPUT, context));
+    scheduler.complete_produce(1);
+    assert(output.empty());
+
+    // Reset only the new staging values; the pending wait keeps its snapshot.
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT_PHASE, 0, context));
+    write_wait(scheduler, context, shared, 0, 0x902);
+    assert(pop(output, scheduler).token == 0x902);
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1, 0x120, context));
+    scheduler.complete_produce(1);
+    assert(pop(output, scheduler).token == 0x901);
+    assert(!interrupts.pending());
+}
+
+void test_explicit_election_phase()
+{
+    RVTNG::resource_cluster_t cluster;
+    queue_t output;
+    RVTNG::resource_scheduler_t scheduler(cluster, output);
+    const auto context = RVTNG::tensor_context_snapshot_t::defaults();
+    write_wait(scheduler, context, 1, 0, 0xa00);
+    assert(pop(output, scheduler).token == 0xa00);
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1, 0x100, context));
+    scheduler.complete_produce(1);
+    write_phase_wait(scheduler, context, 1, 1, 1, 0xa01);
+    assert(output.empty());
+    assert(scheduler.write(RVTNG::RESOURCE_CONSUME_READY, 1, context));
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                           RVTNG::RESOURCE_NO_OUTPUT, context));
+    scheduler.complete_produce(1);
+    auto token = pop(output, scheduler);
+    assert(token.token == 0xa01 && token.extension == 1);
+    write_phase_wait(scheduler, context, 1, 1, 1, 0xa02);
+    assert(output.empty());
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1, 0x100, context));
+    scheduler.complete_produce(1);
+    token = pop(output, scheduler);
+    assert(token.token == 0xa02 && token.extension == 2);
+}
+
+void test_phase_register_validation()
+{
+    RVTNG::resource_cluster_t cluster;
+    queue_t output;
+    RVTNG::interrupt_controller_t interrupts;
+    RVTNG::resource_scheduler_t scheduler(cluster, output, &interrupts);
+    auto context = RVTNG::tensor_context_snapshot_t::defaults();
+    context.local_resources = {1, 0};
+    assert(scheduler.handles(RVTNG::RESOURCE_WAIT_PHASE));
+    assert(!scheduler.handles(RVTNG::RESOURCE_WAIT_PHASE + 1));
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT_PHASE, UINT64_MAX, context));
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT_READY, 2, context));
+    assert(!scheduler.write(RVTNG::RESOURCE_WAIT, 0xb00, context));
+    assert(scheduler.read(RVTNG::RESOURCE_WAIT_PHASE) == UINT64_MAX);
+    assert(scheduler.read(RVTNG::RESOURCE_WAIT_READY) == 2);
+    assert(output.empty());
+    assert(interrupts.count() == 1);
+
+    // Phase bits outside WAIT_READY are ignored, including inaccessible bits.
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT_READY, 1, context));
+    assert(scheduler.write(RVTNG::RESOURCE_WAIT, 0xb02, context));
+    assert(scheduler.read(RVTNG::RESOURCE_WAIT_PHASE) == 0);
+    assert(interrupts.count() == 1);
+}
+
+void test_masked_resource_init(bool shared)
+{
+    RVTNG::resource_cluster_t cluster;
+    queue_t output;
+    RVTNG::resource_scheduler_t scheduler(cluster, output);
+    auto context = RVTNG::tensor_context_snapshot_t::defaults();
+    context.local_resources = {2, 3};
+    context.shared_resources = {2, 7};
+    const unsigned base = shared ? 7 : 3;
+    const unsigned logical = shared ? 32 : 0;
+    const uint64_t a = uint64_t{1} << logical;
+    const uint64_t b = a << 1;
+    const auto clear = [&](uint32_t mask) {
+        return shared ? cluster.clear(mask << base)
+                      : scheduler.write(RVTNG::LOCAL_RESOURCE_INIT,
+                                         uint64_t{mask} << base, context);
+    };
+    const auto publish = [&](unsigned index) {
+        assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                               0x100 | (logical + index), context));
+        scheduler.complete_produce(1);
+    };
+    write_wait(scheduler, context, a | b, 0, 0xc00);
+    assert(pop(output, scheduler).token == 0xc00);
+    publish(0);
+    publish(1);
+    assert(scheduler.write(RVTNG::RESOURCE_CONSUME_READY, a | b, context));
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                           RVTNG::RESOURCE_NO_OUTPUT, context));
+    scheduler.complete_produce(1);
+    write_wait(scheduler, context, a | b, 0, 0xc01);
+    assert(pop(output, scheduler).token == 0xc01);
+    publish(0);
+    publish(1);
+    assert(clear(0));
+    write_phase_wait(scheduler, context, 0, a | b, a | b, 0xc02);
+    assert(pop(output, scheduler).token == 0xc02);
+
+    // A new allocation can clear A while B has an unrelated pending wait.
+    write_phase_wait(scheduler, context, 0, b, 0, 0xc03);
+    assert(output.empty());
+    assert(!clear(3));
+    write_phase_wait(scheduler, context, 0, a, a, 0xc04);
+    assert(pop(output, scheduler).token == 0xc04);
+    assert(clear(1));
+    write_wait(scheduler, context, a, 0, 0xc05);
+    assert(pop(output, scheduler).token == 0xc05);
+    publish(0);
+    write_phase_wait(scheduler, context, 0, a, 0, 0xc06);
+    assert(pop(output, scheduler).token == 0xc06);
+
+    assert(scheduler.write(RVTNG::RESOURCE_CONSUME_READY, b, context));
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                           RVTNG::RESOURCE_NO_OUTPUT, context));
+    assert(!clear(2));
+    scheduler.complete_produce(1);
+    write_wait(scheduler, context, b, 0, 0xc07);
+    assert(pop(output, scheduler).token == 0xc07);
+    assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
+                           0x100 | (logical + 1), context));
+    assert(!clear(2));
+    scheduler.complete_produce(1);
+    assert(!clear(2));
+    assert(pop(output, scheduler).token == 0xc03);
+    assert(clear(2));
+    write_phase_wait(scheduler, context, 0, a, 0, 0xc08);
+    assert(pop(output, scheduler).token == 0xc08);
+}
+
 void test_local_resource_flow()
 {
     RVTNG::resource_cluster_t cluster;
@@ -191,8 +404,7 @@ void test_election_phase_lifecycle()
     write_wait(producer, context, elected, 0, 0x350);
     assert(pop(producer_output, producer).token == 0x350);
 
-    // A waiter arriving after FREE -> BUSY still observes this lifecycle and
-    // must be elected as a consumer once the resource becomes READY.
+    // A waiter requesting phase zero during BUSY joins that same lifecycle.
     write_wait(consumer, context, elected, elected, 0x351);
     assert(consumer_output.empty());
     producer.write(RVTNG::RESOURCE_PRODUCE_BASE + 1,
@@ -229,7 +441,7 @@ void test_election_phase_lifecycle()
     }
     assert(consumer_output.empty());
 
-    write_wait(consumer, context, elected, elected, 0x354);
+    write_phase_wait(consumer, context, elected, elected, elected, 0x354);
     const auto next_producer = pop(consumer_output, consumer);
     assert(next_producer.token == 0x354);
     assert(next_producer.extension ==
@@ -271,23 +483,23 @@ void test_csr_acceptance_and_init()
     assert(scheduler.read(RVTNG::RESOURCE_PRODUCE_BASE + 1) == 0);
     assert(output.empty());
     assert(interrupts.count() == 4);
-    assert(scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, 0, context));
+    assert(scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, UINT32_MAX, context));
 
     // 零值也是合法选举 token；只有实际弹出才更新 TOKEN_EXT 和释放初始化检查额度。
     assert(scheduler.write(RVTNG::RESOURCE_CONSUME_READY, 0, context));
     write_wait(scheduler, context, 1, 1, 0);
     assert(scheduler.read(RVTNG::RESOURCE_TOKEN_EXT) == 0);
-    assert(!scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, 0, context));
+    assert(!scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, UINT32_MAX, context));
     const auto token = pop(output, scheduler);
     assert(token.token == 0 && token.extension == 1 && token.resource);
     assert(scheduler.read(RVTNG::RESOURCE_TOKEN_EXT) == 1);
     assert(scheduler.write(RVTNG::RESOURCE_PRODUCE_BASE + 1, 0x100, context));
-    assert(!scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, 0, context));
+    assert(!scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, UINT32_MAX, context));
     scheduler.complete_produce(1);
     assert(output.empty());
-    assert(scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, 0, context));
+    assert(scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, UINT32_MAX, context));
     write_wait(scheduler, context, 0, 1, 0x700);
-    assert(!scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, 0, context));
+    assert(!scheduler.write(RVTNG::LOCAL_RESOURCE_INIT, UINT32_MAX, context));
     assert(interrupts.count() == 7);
 }
 
@@ -309,6 +521,13 @@ void test_scoreboard_decode()
 
 int main()
 {
+    test_phase_ready_generations(false);
+    test_phase_ready_generations(true);
+    test_phase_context_mapping();
+    test_explicit_election_phase();
+    test_phase_register_validation();
+    test_masked_resource_init(false);
+    test_masked_resource_init(true);
     test_local_resource_flow();
     test_shared_resource_flow();
     test_terminal_consume();

@@ -4,6 +4,7 @@
 #include "rvt64_helper.hpp"
 #include "swizzle.hpp"
 #include "fputils.hpp"
+#include "vec_convert.hpp"
 #include <atomic>
 #include <thread>
 #include <cmath>
@@ -74,20 +75,13 @@ namespace RVTNG {
 
     bool rvt64_t::validate_tensor(
         uint64_t base, const rvt64_tcsr_t& control,
-        unsigned operand, unsigned element_bytes, bool collapse_dim0,
+        unsigned operand, unsigned element_bytes, bool collapse_dim0, bool write,
         interrupt_source_t range_source,
         interrupt_source_t align_source) const {
         if((context == nullptr && interrupts == nullptr) || element_bytes == 0) {
             return true;
         }
         base &= 0x1fffff;
-        if((base & 31) != 0) {
-            if(interrupts) {
-                interrupts->raise(align_source, static_cast<uint32_t>(base));
-            }
-            return false;
-        }
-
         uint64_t stride1 = 0;
         uint64_t stride2 = 0;
         uint64_t stride3 = 0;
@@ -103,6 +97,19 @@ namespace RVTNG {
             stride1 = control.DstDim1Stride;
             stride2 = control.DstDim2Stride;
             stride3 = control.DstDim3Stride;
+        }
+        // MACRO stores may start within a URAM beat, but must preserve element
+        // alignment. Every nonempty outer dimension must also preserve it.
+        const uint64_t alignment = write ? element_bytes : 32;
+        const uint64_t bases[] = {base, base + stride1, base + stride2, base + stride3};
+        const bool active[] = {true, control.dim1 != 0, control.dim2 != 0, control.dim3 != 0};
+        for(unsigned i = 0; i < 4; ++i) {
+            if(active[i] && (bases[i] % alignment) != 0) {
+                if(interrupts) {
+                    interrupts->raise(align_source, static_cast<uint32_t>(bases[i]));
+                }
+                return false;
+            }
         }
         const __uint128_t span =
             __uint128_t{collapse_dim0 ? 0 : control.dim0} * element_bytes +
@@ -135,22 +142,21 @@ namespace RVTNG {
         const uint8_t broadcast = (inst.inst >> 46) & 0x3;
         const auto check_a = [&](unsigned bytes, bool collapse = false) {
             return validate_tensor(
-                inst.rs1, control, 0, bytes, collapse,
+                inst.rs1, control, 0, bytes, collapse, false,
                 interrupt_source_t::neovec_uram_lda_range,
                 interrupt_source_t::neovec_uram_lda_align);
         };
         const auto check_b = [&](uint64_t base, unsigned bytes,
                                  bool collapse = false) {
             return validate_tensor(
-                base, control, 1, bytes, collapse,
+                base, control, 1, bytes, collapse, false,
                 interrupt_source_t::neovec_uram_ldb_range,
                 interrupt_source_t::neovec_uram_ldb_align);
         };
         const auto check_store = [&](uint64_t base, unsigned bytes,
-                                     bool collapse = false,
-                                     unsigned operand = 2) {
+                                     bool collapse = false) {
             return validate_tensor(
-                base, control, operand, bytes, collapse,
+                base, control, 2, bytes, collapse, true,
                 interrupt_source_t::neovec_uram_store_range,
                 interrupt_source_t::neovec_uram_store_align);
         };
@@ -172,7 +178,7 @@ namespace RVTNG {
                 return false;
             }
             return broadcast == 0 || check_store(inst.rs2, sizeof(uint32_t),
-                                                  true, 1);
+                                                  true);
         }
         default:
             return true;
@@ -194,7 +200,8 @@ namespace RVTNG {
             uint8_t group = (inst.inst >> 12) & 0x7;
             uint8_t extension = (inst.inst >> 25) & 0x7f;
             uint8_t data_type = (inst.inst >> 32) & 0xff;
-            uint8_t operation = (inst.inst >> 40) & 0x3f;
+            uint8_t operation = extension == RVT_MACRO_EXT_SFU
+                ? RVT64_SFU_OP(inst.inst) : RVT64_ELEM_OP(inst.inst);
             uint8_t Bd = (inst.inst >> 46) & 0x3;
 
             uint8_t src_type = (inst.inst >> 32) & 0xff;
@@ -368,21 +375,20 @@ namespace RVTNG {
                             case RVT_TYPE_FP32: // FP32
                                 switch (dst_type) {
                                     case RVT_TYPE_S32: // S32
-                                        // TODO: Support Round Mode
-                                        rvt64_handle_unary_operation<float, int32_t>(
-                                            [](auto x) -> int32_t { return static_cast<int32_t>(x); },
+                                        rvt64_handle_unary_operation<uint32_t, uint32_t>(
+                                            [](uint32_t x) { return vec_fp32_to_s32(x, vec_rounding_mode_t::rne); },
                                             uram, inst.rs1, inst.rd, selected_tcsr
                                         );
                                         break;
                                     case RVT_TYPE_BF16: // BF16
-                                        rvt64_handle_unary_operation<float, uint16_t>(
-                                            FP32ToBF16,
+                                        rvt64_handle_unary_operation<uint32_t, uint16_t>(
+                                            [](uint32_t x) { return vec_fp32_to_bf16(x, vec_rounding_mode_t::rne); },
                                             uram, inst.rs1, inst.rd, selected_tcsr
                                         );
                                         break;
                                     case RVT_TYPE_FP16: // FP16
-                                        rvt64_handle_unary_operation<float, uint16_t>(
-                                            FP32ToFP16,
+                                        rvt64_handle_unary_operation<uint32_t, uint16_t>(
+                                            [](uint32_t x) { return vec_fp32_to_fp16(x, vec_rounding_mode_t::rne); },
                                             uram, inst.rs1, inst.rd, selected_tcsr
                                         );
                                         break;

@@ -135,6 +135,37 @@ public:
         assert(read(1, 33, INTERRUPT_TCSR_UNIT) == 0);
     }
 
+    void test_phase_reuse()
+    {
+        constexpr uint8_t index = 10;
+        constexpr uint64_t mask = uint64_t{1} << index;
+        wait(0, mask, 0, 0x600);
+        pop(0, 0x600);
+        write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_MAT, 0x100 | index);
+        for(unsigned generation = 0; generation < 4; ++generation) {
+            const uint64_t phase = generation & 1 ? mask : 0;
+            write(0, RESOURCE_WAIT_PHASE, phase);
+            wait(0, 0, mask, 0x610 + generation);
+            pop(0, 0x610 + generation);
+            write(0, RESOURCE_WAIT_PHASE, phase ^ mask);
+            wait(0, 0, mask, 0x620 + generation);
+            assert(read(0, RESOURCE_WAIT_PHASE) == 0);
+            assert(read(0, 0) == 0);
+            write(0, RESOURCE_CONSUME_READY, mask);
+            write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU, RESOURCE_NO_OUTPUT);
+            wait(0, mask, 0, 0x630 + generation);
+            pop(0, 0x630 + generation);
+            assert(read(0, 0) == 0);
+            write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_MAT, 0x100 | index);
+            pop(0, 0x620 + generation);
+        }
+        write(0, RESOURCE_CONSUME_READY, mask);
+        write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU, RESOURCE_NO_OUTPUT);
+        write(0, RVT_UNIT_LSU, 0x640);
+        pop(0, 0x640);
+        write(0, LOCAL_RESOURCE_INIT, mask);
+    }
+
 private:
     static uint64_t receive(int fd)
     {
@@ -174,6 +205,7 @@ int main()
 {
     alarm(30);
     resource_core_test_t test;
+    test.test_phase_reuse();
     test.test_mmu_resource_chain();
     assert(test.read(0, TENSOR_RESOURCE_CONTEXT_ADDRESS) == 0x200400);
     test.write(0, RESOURCE_WAIT_QOS, 0xff);
@@ -203,7 +235,7 @@ int main()
     test.write(0, RESOURCE_PRODUCE_BASE + 4, 0xff);
     test.wait(0, 8, 0, 0x130);
     test.pop(0, 0x130);
-    test.write(0, LOCAL_RESOURCE_INIT);
+    test.write(0, LOCAL_RESOURCE_INIT, UINT32_MAX);
     test.wait(0, 1, 1, 0);
     test.write(0, 0, 0xdead);
     assert(test.read(0, RESOURCE_TOKEN_EXT) == 0);
@@ -244,12 +276,12 @@ int main()
     test.write(1, RESOURCE_PRODUCE_BASE + 1, 0x100);
     test.pop(1, 0x201);
     assert(test.read(1, 33, INTERRUPT_TCSR_UNIT) == 0);
-    test.write(1, LOCAL_RESOURCE_INIT);
+    test.write(1, LOCAL_RESOURCE_INIT, UINT32_MAX);
     for(unsigned index = 0; index < 32; ++index) test.wait(1, 1ull << index, 0, 0x400 + index);
     test.write(1, RESOURCE_PRODUCE_BASE + 1, 0x11f);
     assert(test.read(1, 1) == 0);
     assert(test.read(1, 33, INTERRUPT_TCSR_UNIT) == 0);
-    test.write(1, LOCAL_RESOURCE_INIT);
+    test.write(1, LOCAL_RESOURCE_INIT, UINT32_MAX);
     assert(test.read(1, 33, INTERRUPT_TCSR_UNIT) == 1);
     for(unsigned index = 0; index < 32; ++index) test.pop(1, 0x400 + index);
     std::cout << "Resource core integration passed (four units, two cores, MMU DMA)" << std::endl;

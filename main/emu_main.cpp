@@ -35,7 +35,8 @@ static constexpr size_t kUramBytesPerCore = 1536 * 1024;
  */
 static std::atomic<bool> mmu_config_synced{true};
 
-static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* cores) {
+static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* cores,
+                                  RVTNG::resource_cluster_t* resources) {
     for(;;) {
         int fd = rvt_socket_server_init(RVT_MMU_SOCKET_PATH);
         if(fd < 0) {
@@ -83,6 +84,19 @@ static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* c
                     // execution may resume once it has been applied.
                     initial_replay_done = true;
                     mmu_config_synced.store(true, std::memory_order_release);
+                }
+                break;
+            }
+            case 0x22: { // Shared Resource clear mask; acknowledge before Host launch.
+                uint64_t mask;
+                if(rvt_socket_pop(fd, &mask) != 0) {
+                    peer_lost = true;
+                    break;
+                }
+                const bool accepted = !(mask >> 32) &&
+                    resources->clear(static_cast<uint32_t>(mask));
+                if(rvt_socket_push(fd, accepted ? 0 : 1) != 0) {
+                    peer_lost = true;
                 }
                 break;
             }
@@ -184,10 +198,27 @@ int main(int argc, char** argv) {
 
     printf("RVTNG Emulator: Using %d cores\n", num_cores);
 
+    size_t dram_size = RVTNG::MMU_DEFAULT_DRAM_SIZE;
+    if (const char *memory_mib = getenv("NPU_CMODEL_MEMORY_MIB")) {
+        char *end = nullptr;
+        errno = 0;
+        const unsigned long long mib = strtoull(memory_mib, &end, 10);
+        if (errno || memory_mib[0] < '0' || memory_mib[0] > '9' || *end ||
+            mib == 0 || mib > SIZE_MAX / (1024UL * 1024UL)) {
+            fprintf(stderr, "Error: invalid NPU_CMODEL_MEMORY_MIB\n");
+            return 1;
+        }
+        dram_size = mib * 1024UL * 1024UL;
+    }
+
     // Create DRAM (shared by all cores)
-    uint8_t* dram = (uint8_t *)backend_get_shm_ptr("/dram_shm_0", 4ul * 1024ul * 1024ul * 1024ul);
+    uint8_t* dram = (uint8_t *)backend_get_shm_ptr("/dram_shm_0", dram_size);
+    if (dram == nullptr) {
+        fprintf(stderr, "Error: failed to create shared DRAM\n");
+        return 1;
+    }
     printf("Note: If the emulator fails to start with SIGBUS signal, it means Shared Memory is not properly created.\nPlease run: sudo mount -o remount,size=32G /dev/shm\n");
-    dram[0x100000000ul - 1] = 0x0; // Check Shared DRAM Status
+    dram[dram_size - 1] = 0x0; // Check Shared DRAM Status
 
     uint8_t* uram[num_cores];
     // Create URAM (Per-core)
@@ -267,7 +298,7 @@ int main(int argc, char** argv) {
         try {
             cores.push_back(std::make_unique<core_context_t>(
                 i, fdMsg, fdMsgMutex, dram, uram[i], &uram[0],
-                (size_t)num_cores, resource_cluster));
+                (size_t)num_cores, resource_cluster, dram_size));
         } catch(const std::exception& e) {
             fprintf(stderr, "Error: Failed to create core %d: %s\n", i, e.what());
             return 1;
@@ -278,7 +309,7 @@ int main(int argc, char** argv) {
 
     // Mirror QEMU's ClusterMMU config onto the tensor-side mmu_t
     // instances (additive; see mmu_config_sync_loop above).
-    std::thread(mmu_config_sync_loop, &cores).detach();
+    std::thread(mmu_config_sync_loop, &cores, &resource_cluster).detach();
 
     // Main loop: fetch instructions for all cores
     while(1) {

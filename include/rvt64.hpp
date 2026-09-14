@@ -61,7 +61,7 @@ protected:
     };
     bool validate_tensor(uint64_t base, const rvt64_tcsr_t& control,
                          unsigned operand, unsigned element_bytes,
-                         bool collapse_dim0,
+                         bool collapse_dim0, bool write,
                          interrupt_source_t range_source,
                          interrupt_source_t align_source) const;
     bool validate_instruction(const rvt_pack_t& inst,

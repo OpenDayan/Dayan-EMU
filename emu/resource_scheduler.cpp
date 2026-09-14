@@ -28,6 +28,22 @@ void resource_cluster_t::schedule_all_locked()
     }
 }
 
+bool resource_cluster_t::clear(uint32_t mask)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for(const auto* scheduler : schedulers_) {
+        if(scheduler->in_use_locked(mask, true)) {
+            return false;
+        }
+    }
+    for(unsigned index = 0; index < RESOURCE_TABLE_ENTRIES; ++index) {
+        if(mask & (uint32_t{1} << index)) {
+            shared_[index] = {};
+        }
+    }
+    return true;
+}
+
 resource_scheduler_t::resource_scheduler_t(
     resource_cluster_t& cluster, MPMCQueue<scoreboard_entry_t, 32>& output,
     interrupt_controller_t* interrupts)
@@ -46,7 +62,7 @@ bool resource_scheduler_t::handles(uint16_t address) const
     return (address >= RESOURCE_PRODUCE_BASE &&
             address < RESOURCE_PRODUCE_BASE + 16) ||
            (address >= RESOURCE_WAIT_FREE &&
-            address <= RESOURCE_TOKEN_EXT);
+            address <= RESOURCE_WAIT_PHASE);
 }
 
 resource_entry_t& resource_scheduler_t::entry_locked(bool shared,
@@ -121,6 +137,8 @@ uint64_t resource_scheduler_t::read(uint16_t address)
         return wait_ready_;
     case RESOURCE_WAIT_QOS:
         return wait_qos_;
+    case RESOURCE_WAIT_PHASE:
+        return wait_phase_;
     case RESOURCE_CONSUME_READY:
         return consume_ready_;
     case RESOURCE_TOKEN_EXT:
@@ -136,10 +154,12 @@ bool resource_scheduler_t::register_wait_locked(
 {
     mapped_mask_t mapped_free;
     mapped_mask_t mapped_ready;
+    mapped_mask_t mapped_phase;
     const uint64_t election = wait_free_ & wait_ready_;
     if((election != 0 && (election & (election - 1)) != 0) ||
        !map_mask_locked(wait_free_, context, mapped_free) ||
-       !map_mask_locked(wait_ready_, context, mapped_ready)) {
+       !map_mask_locked(wait_ready_, context, mapped_ready) ||
+       !map_mask_locked(wait_phase_ & wait_ready_, context, mapped_phase)) {
         raise_locked(RESOURCE_WAIT);
         return false;
     }
@@ -152,6 +172,7 @@ bool resource_scheduler_t::register_wait_locked(
     wait_entry_t wait;
     wait.wait_free = mapped_free;
     wait.wait_ready = mapped_ready;
+    wait.phase = mapped_phase;
     wait.qos = static_cast<int8_t>(wait_qos_ & 7);
     if(wait.qos & 4) {
         wait.qos = static_cast<int8_t>(wait.qos - 8);
@@ -165,13 +186,13 @@ bool resource_scheduler_t::register_wait_locked(
             raise_locked(RESOURCE_WAIT);
             return false;
         }
-        wait.election_phase = entry_locked(wait.election_shared,
-                                            wait.election_index).phase;
+        wait.election_phase = (wait_phase_ & election) != 0;
     }
     wait_fifo_.push_back(wait);
     wait_free_ = 0;
     wait_ready_ = 0;
     wait_qos_ = 0;
+    wait_phase_ = 0;
     refill_issue_locked();
     cluster_.schedule_all_locked();
     return true;
@@ -231,31 +252,64 @@ bool resource_scheduler_t::write(
     case RESOURCE_WAIT_QOS:
         wait_qos_ = value & 7;
         break;
+    case RESOURCE_WAIT_PHASE:
+        wait_phase_ = value;
+        break;
     case RESOURCE_WAIT:
         return register_wait_locked(value, context, lock);
     case RESOURCE_CONSUME_READY:
         consume_ready_ = value;
         break;
     case LOCAL_RESOURCE_INIT: {
-        // 与 LocalScheduler 一样检查内部未完成项，其他资源使用者由软件负责排空。
-        bool quiescent = wait_fifo_.empty() && issue_queue_.empty() && pending_tokens_ == 0;
-        for(const auto& pending : pending_produce_) {
-            quiescent = quiescent && pending.empty();
-        }
-        if(!quiescent) {
+        const uint32_t mask = static_cast<uint32_t>(value);
+        if((value >> 32) || in_use_locked(mask, false)) {
             raise_locked(LOCAL_RESOURCE_INIT);
             return false;
         }
-        local_.fill(resource_entry_t{});
+        for(unsigned index = 0; index < RESOURCE_TABLE_ENTRIES; ++index) {
+            if(mask & (uint32_t{1} << index)) {
+                local_[index] = {};
+            }
+        }
         break;
     }
     case RESOURCE_TOKEN_EXT:
-        raise_locked(RESOURCE_TOKEN_EXT);
+        raise_locked(address);
         return false;
     default:
         return false;
     }
     return true;
+}
+
+bool resource_scheduler_t::in_use_locked(uint32_t mask, bool shared) const
+{
+    const auto overlaps_wait = [mask, shared](const wait_entry_t& wait) {
+        return mask & (shared ? wait.wait_free.shared | wait.wait_ready.shared
+                              : wait.wait_free.local | wait.wait_ready.local);
+    };
+    if(std::any_of(wait_fifo_.begin(), wait_fifo_.end(), overlaps_wait) ||
+       std::any_of(issue_queue_.begin(), issue_queue_.end(), overlaps_wait)) {
+        return true;
+    }
+    for(const auto& queue : pending_produce_) {
+        for(const auto& produce : queue) {
+            const uint32_t inputs = shared ? produce.consume_ready.shared
+                                            : produce.consume_ready.local;
+            if((mask & inputs) ||
+               (produce.has_output && produce.output_shared == shared &&
+                (mask & (uint32_t{1} << produce.output_index)))) {
+                return true;
+            }
+        }
+    }
+    const auto& tokens = shared ? shared_tokens_ : local_tokens_;
+    for(unsigned index = 0; index < RESOURCE_TABLE_ENTRIES; ++index) {
+        if((mask & (uint32_t{1} << index)) && tokens[index]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool resource_scheduler_t::wait_ready_locked(
@@ -287,7 +341,12 @@ bool resource_scheduler_t::wait_ready_locked(
                index == wait.election_index) {
                 continue;
             }
-            if(entry_locked(shared, index).state != state) {
+            const resource_entry_t& resource = entry_locked(shared, index);
+            const uint32_t phase = shared ? wait.phase.shared : wait.phase.local;
+            const uint32_t bit = uint32_t{1} << index;
+            if(resource.state != state ||
+               (state == resource_state_t::ready &&
+                resource.phase != ((phase & bit) != 0))) {
                 return false;
             }
         }
@@ -307,11 +366,17 @@ bool resource_scheduler_t::wait_ready_locked(
 bool resource_scheduler_t::reserve_wait_locked(
     const wait_entry_t& wait, resource_role_t role)
 {
-    scoreboard_entry_t output{wait.token, static_cast<uint64_t>(role), true};
+    scoreboard_entry_t output{wait.token, static_cast<uint64_t>(role), true,
+        wait.wait_free.local | wait.wait_ready.local,
+        wait.wait_free.shared | wait.wait_ready.shared};
     if(!output_.try_enqueue(output)) {
         return false;
     }
     ++pending_tokens_;
+    for(unsigned index = 0; index < RESOURCE_TABLE_ENTRIES; ++index) {
+        local_tokens_[index] += (output.local_resources >> index) & 1;
+        shared_tokens_[index] += (output.shared_resources >> index) & 1;
+    }
     auto reserve_mask = [&](uint32_t mask, bool shared) {
         while(mask) {
             const uint8_t index = static_cast<uint8_t>(__builtin_ctz(mask));
@@ -436,6 +501,10 @@ void resource_scheduler_t::output_popped(const scoreboard_entry_t& entry)
     if(entry.resource) {
         assert(pending_tokens_ > 0);
         --pending_tokens_;
+        for(unsigned index = 0; index < RESOURCE_TABLE_ENTRIES; ++index) {
+            local_tokens_[index] -= (entry.local_resources >> index) & 1;
+            shared_tokens_[index] -= (entry.shared_resources >> index) & 1;
+        }
     }
     cluster_.schedule_all_locked();
 }

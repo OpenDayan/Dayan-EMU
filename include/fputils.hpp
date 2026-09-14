@@ -84,10 +84,7 @@ static inline float BF16Clip(float a) {
     return BF16ToFP32(FP32ToBF16(a));
 }
 
-// TF32 operands are stored in FP32 containers and rounded to a 10-bit
-// fraction before multiplication. Round-to-nearest-even matches the usual
-// TF32 conversion rule and leaves infinities intact. A NaN whose payload
-// lives only in discarded bits remains a NaN after truncation.
+// MAT TF32 uses FP32 containers and truncates to ten fraction bits.
 static inline float TF32Clip(float value) {
     fp32_int32 in;
     in.f = value;
@@ -101,8 +98,7 @@ static inline float TF32Clip(float value) {
         return in.f;
     }
 
-    const uint32_t rounding_bias = 0x00000fffu + ((in.bits >> 13) & 1u);
-    in.bits = (in.bits + rounding_bias) & 0xffffe000u;
+    in.bits &= 0xffffe000u;
     return in.f;
 }
 

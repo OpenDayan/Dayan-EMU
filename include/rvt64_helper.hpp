@@ -5,6 +5,7 @@
 #include <thread>
 #include <functional>
 #include <cassert>
+#include <cstring>
 
 
 namespace RVTNG {
@@ -15,23 +16,26 @@ namespace RVTNG {
 
     template<typename T, long src>
     static inline void* rvt64_get_uram_ptr(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr) {
-        ulong stride0, stride1, stride2, stride3;
+        ulong stride0, stride1, stride2, stride3, swizzle;
         stride0 = sizeof(T);
         switch (src) {
             case 0:
                 stride1 = tcsr.Src0Dim1Stride;
                 stride2 = tcsr.Src0Dim2Stride;
                 stride3 = tcsr.Src0Dim3Stride;
+                swizzle = tcsr.Src0SwizzleMBS;
                 break;
             case 1:
                 stride1 = tcsr.Src1Dim1Stride;
                 stride2 = tcsr.Src1Dim2Stride;
                 stride3 = tcsr.Src1Dim3Stride;
+                swizzle = tcsr.Src1SwizzleMBS;
                 break;
             case 2:
                 stride1 = tcsr.DstDim1Stride;
                 stride2 = tcsr.DstDim2Stride;
                 stride3 = tcsr.DstDim3Stride;
+                swizzle = tcsr.DstSwizzleMBS;
                 break;
             default: 
                 assert(0);
@@ -43,18 +47,20 @@ namespace RVTNG {
             + dim2 * stride2
             + dim3 * stride3;
         base = base & 0x1fffff; // Architectural URAM address width is 21 bits.
-        auto addr = offset + base;
+        auto addr = swizzle_addr_raw(offset + base, swizzle);
         return (void*)(uram + addr);
     }
 
     template<typename T, ulong src>
     static inline void rvt64_write_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr, const T& data) {
-        *(T*)rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr) = data;
+        std::memcpy(rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr), &data, sizeof(T));
     }
 
     template<typename T, ulong src>
     static inline T rvt64_read_uram(uint8_t* uram, ulong base, ulong dim0, ulong dim1, ulong dim2, ulong dim3, const rvt64_tcsr_t& tcsr) {
-        return  *(T*)rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr);
+        T data;
+        std::memcpy(&data, rvt64_get_uram_ptr<T, src>(uram, base, dim0, dim1, dim2, dim3, tcsr), sizeof(T));
+        return data;
     }
 
     template<typename T>
@@ -146,7 +152,7 @@ namespace RVTNG {
                             idx = dim0;
                         }
                     }
-                    if(need_idx) rvt64_write_uram<uint32_t, 1>(uram, i_base, 0, dim1, dim2, dim3, tcsr, (uint32_t)idx);
+                    if(need_idx) rvt64_write_uram<uint32_t, 2>(uram, i_base, 0, dim1, dim2, dim3, tcsr, (uint32_t)idx);
                     rvt64_write_uram<TOUT, 2>(uram, y_base, 0, dim1, dim2, dim3, tcsr, acc);
                 }
             }
