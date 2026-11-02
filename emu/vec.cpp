@@ -1052,9 +1052,10 @@ static uint64_t execute_mode1(vec_thread_context_t& ctx,
     };
 
     execute_range(0, c.prologue0_end);
-    for(ctx.coord.d0 = 0; ctx.coord.d0 <= task.tcsr_snapshot.dim0; ctx.coord.d0++) {
+    for(ctx.coord.d1 = 0; ctx.coord.d1 <= task.tcsr_snapshot.dim1; ctx.coord.d1++) {
+        ctx.coord.d0 = 0;
         execute_range(c.prologue0_end, c.prologue1_end);
-        for(ctx.coord.d1 = 0; ctx.coord.d1 <= task.tcsr_snapshot.dim1; ctx.coord.d1++) {
+        for(; ctx.coord.d0 <= task.tcsr_snapshot.dim0; ctx.coord.d0++) {
             execute_range(c.prologue1_end, c.loop_end);
         }
         execute_range(c.loop_end, c.epilogue1_end);
@@ -1134,20 +1135,19 @@ static vec_task_resp_t execute_vec_task(const vec_task_req_t& task,
 uint32_t vec_sparse_memory_t::read_u32(uint64_t addr)
 {
     std::lock_guard<std::mutex> lock(mutex);
-    auto it = words.find(addr >> 2);
-    return it == words.end() ? 0 : it->second;
+    return words[(addr >> 2) & (words.size() - 1)];
 }
 
 void vec_sparse_memory_t::write_u32(uint64_t addr, uint32_t value)
 {
     std::lock_guard<std::mutex> lock(mutex);
-    words[addr >> 2] = value;
+    words[(addr >> 2) & (words.size() - 1)] = value;
 }
 
 uint32_t vec_sparse_memory_t::atomic_update_u32(uint64_t addr, uint32_t value, uint8_t op)
 {
     std::lock_guard<std::mutex> lock(mutex);
-    uint32_t& word = words[addr >> 2];
+    uint32_t& word = words[(addr >> 2) & (words.size() - 1)];
     uint32_t old = word;
     switch(op & 0x3) {
     case 0:

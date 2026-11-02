@@ -13,7 +13,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -234,8 +233,10 @@ struct vec_sparse_memory_t {
     uint32_t atomic_update_u32(uint64_t addr, uint32_t value, uint8_t op);
 
 private:
+    // Match SparseMemParms: 32 banks, 64 words per bank.
+    static constexpr size_t word_count = 32 * 64;
     std::mutex mutex;
-    std::unordered_map<uint64_t, uint32_t> words;
+    std::array<uint32_t, word_count> words{};
 };
 
 class vec_executer_t {
