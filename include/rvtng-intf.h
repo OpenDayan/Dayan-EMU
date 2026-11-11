@@ -58,7 +58,7 @@ typedef struct {
 #define RVT_MSG_SOCKET_PATH "/tmp/card0_rvt_msg"
 #define RVT_INST_REQ_SOCKET_PATH "/tmp/card0_rvt_inst_req"
 #define RVT_INST_RSP_SOCKET_PATH "/tmp/card0_rvt_inst_rsp"
-/* ClusterMMU config-sync socket : the CModel owns the listening end;
+/* ClusterMMU config-sync socket : the Dayan-emu owns the listening end;
  * the QEMU front end pushes {0x20, addr, value}
  * register writes and {0x21, mode|asid<<8} flush events as 8-byte word
  * records. Shared Resource initialization sends {0x22, physical_mask}

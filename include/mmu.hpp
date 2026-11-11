@@ -11,7 +11,7 @@
 // The behavioral ClusterMMU implementation lives in the shared C core
 // hw/riscv/rvtng_mmu_core.c (built from deps/npu-qemu and also linked by
 // the QEMU device).  This class is a C++ shell over it: per-instance
-// thread safety, the std::function PTE-reader bridge and the CModel-side
+// thread safety, the std::function PTE-reader bridge and the Dayan-emu-side
 // enum/result surface.  The access, fault, page-size and PTE-response
 // enums mirror the core's numerically, so conversion is a static_cast.
 #include "hw/riscv/rvtng_mmu_core.h"
@@ -111,7 +111,7 @@ public:
     // naturally produces PTE_INVALID after FixMap is disabled.
     explicit mmu_t(mmu_pte_reader_t reader = {});
 
-    // Convenience constructor for the CModel's shared DRAM image.  The
+    // Convenience constructor for the Dayan-emu's shared DRAM image.  The
     // physical address accepted by the callback is [dram_base, dram_base+size).
     mmu_t(uint8_t* dram, size_t dram_size,
           uint64_t dram_base = MMU_DRAM_BASE);
@@ -133,7 +133,7 @@ public:
 
     void set_pte_reader(mmu_pte_reader_t reader);
 
-    // Direct configuration API for CModel clients.
+    // Direct configuration API for Dayan-emu clients.
     void set_ptw_base(uint64_t value);
     void set_global_asid(uint8_t value);
     void set_fixmap(bool n_enable, uint64_t base, uint64_t size_pages);
@@ -146,7 +146,7 @@ public:
     uint32_t read_register(uint16_t address) const;
 
     // The hardware flush is a drain/clear/reopen sequence.  A synchronous
-    // CModel has no cycle-level in-flight ownership, so this API performs the
+    // Dayan-emu has no cycle-level in-flight ownership, so this API performs the
     // clear atomically and sets the same sticky done/error status bits.
     void flush(bool asid_selective, uint8_t asid);
     bool flush_done() const;

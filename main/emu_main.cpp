@@ -199,13 +199,13 @@ int main(int argc, char** argv) {
     printf("RVTNG Emulator: Using %d cores\n", num_cores);
 
     size_t dram_size = RVTNG::MMU_DEFAULT_DRAM_SIZE;
-    if (const char *memory_mib = getenv("NPU_CMODEL_MEMORY_MIB")) {
+    if (const char *memory_mib = getenv("DAYAN_EMU_MEMORY_MIB")) {
         char *end = nullptr;
         errno = 0;
         const unsigned long long mib = strtoull(memory_mib, &end, 10);
         if (errno || memory_mib[0] < '0' || memory_mib[0] > '9' || *end ||
             mib == 0 || mib > SIZE_MAX / (1024UL * 1024UL)) {
-            fprintf(stderr, "Error: invalid NPU_CMODEL_MEMORY_MIB\n");
+            fprintf(stderr, "Error: invalid DAYAN_EMU_MEMORY_MIB\n");
             return 1;
         }
         dram_size = mib * 1024UL * 1024UL;

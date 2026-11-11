@@ -40,7 +40,7 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
 
     // Create one MMU/cache context per core.  The PTW reader observes the
     // shared DRAM image; reset defaults leave the full-range identity FixMap
-    // enabled, preserving the pre-MMU CModel behaviour until software
+    // enabled, preserving the pre-MMU Dayan-emu behaviour until software
     // programs the register image exposed by core_context_t::mmu.
     mmu = std::make_unique<RVTNG::mmu_t>(dram, dram_size, dram_base);
 

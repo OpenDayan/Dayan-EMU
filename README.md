@@ -1,17 +1,17 @@
-# RVTNG CModel
+# Dayan-emu
 
-RVTNG CModel 是 Dayan/RVTNG NPU 的功能级模拟器。它与仓库内定制的
+Dayan-emu 是 Dayan/RVTNG NPU 的功能级模拟器。它与仓库内定制的
 `npu-qemu` 配合运行：QEMU 负责 RISC-V 标量核、固件启动、SoC 外设和 Host
-接口，CModel 负责张量指令的取指、分发与 LSU/MAT/VEC/MACRO 功能执行。
+接口，Dayan-emu 负责张量指令的取指、分发与 LSU/MAT/VEC/MACRO 功能执行。
 
 当前版本支持 1～8 个计算 Core、每 Core 独立 URAM、Core 间 URAM 访问、共享
 DRAM、Tensor Context、Scoreboard 和张量异常/中断上报。
 
 ## 架构
 
-### QEMU 与 CModel 分离
+### QEMU 与 Dayan-emu 分离
 
-QEMU 没有链接进 CModel。`bin/rvt_emulator` 同时承担张量后端和进程启动器的
+QEMU 没有链接进 Dayan-emu。`bin/rvt_emulator` 同时承担张量后端和进程启动器的
 职责：它先创建共享内存，再 `fork/exec` 一个独立的 QEMU 子进程，随后建立 IPC
 通道并运行各个张量执行单元。
 
@@ -29,7 +29,7 @@ flowchart LR
         FUSE <--> SoC
     end
 
-    subgraph CMODEL[rvt_emulator 主进程：张量后端]
+    subgraph DAYAN_EMU[rvt_emulator 主进程：张量后端]
         Fetch[IPC 取指与提交]
         Dispatch[Core Context / 指令分发]
         Units[LSU · MAT · VEC · RVT64/MACRO]
@@ -42,15 +42,15 @@ flowchart LR
     Host <--> |/tmp/virtual_npu| FUSE
     IQ --> |张量指令、操作数、Core ID| Fetch
     Fetch --> |寄存器提交、外部中断电平| IQ
-    QEMU <--> |POSIX 共享 DRAM / URAM| CMODEL
+    QEMU <--> |POSIX 共享 DRAM / URAM| DAYAN_EMU
 ```
 
-在源码和 IPC 接口中，QEMU 被称为 **frontend**，CModel 被称为
+在源码和 IPC 接口中，QEMU 被称为 **frontend**，Dayan-emu 被称为
 **backend**。一次张量指令的大致流程是：
 
 1. 固件在 QEMU 中执行。QEMU 遇到 RVTNG 张量指令后，将指令、`rd/rs1/rs2`
    寄存器值和 Core ID 放入对应 Core 的队列。
-2. CModel 轮询各 Core，通过 IPC 取走指令并交给 `core_context_t`。
+2. Dayan-emu 轮询各 Core，通过 IPC 取走指令并交给 `core_context_t`。
 3. 指令被分发到 LSU、MAT、VEC 或 RVT64/MACRO；每个执行单元有独立执行线程，
    Tensor Context、Scoreboard 和中断控制器属于对应 Core。
 4. 需要回写标量寄存器的结果通过消息通道提交回 QEMU；张量异常会更新对应
@@ -61,9 +61,9 @@ flowchart LR
 
 | 资源 | 方向 | 用途 |
 | --- | --- | --- |
-| `/tmp/card0_rvt_inst_req` | CModel → QEMU | 请求指定 Core 的下一条张量指令 |
-| `/tmp/card0_rvt_inst_rsp` | QEMU → CModel | 返回有效标志、指令、操作数和时间戳 |
-| `/tmp/card0_rvt_msg` | 主要为 CModel → QEMU | 寄存器提交、中断电平更新；协议也保留内存读写消息 |
+| `/tmp/card0_rvt_inst_req` | Dayan-emu → QEMU | 请求指定 Core 的下一条张量指令 |
+| `/tmp/card0_rvt_inst_rsp` | QEMU → Dayan-emu | 返回有效标志、指令、操作数和时间戳 |
+| `/tmp/card0_rvt_msg` | 主要为 Dayan-emu → QEMU | 寄存器提交、中断电平更新；协议也保留内存读写消息 |
 | `/dram_shm_0` | 双方共享 | 4 GiB DRAM，Guest 基地址为 `0x8000_0000` |
 | `/uram_shm_<core>` | 双方共享 | 每 Core 1.5 MiB URAM；Guest 基地址为 `0x0080_0000 + core × 0x0020_0000` |
 
@@ -142,7 +142,7 @@ sudo mount -o remount,size=32G /dev/shm
 make deps
 ```
 
-构建 QEMU 和 CModel：
+构建 QEMU 和 Dayan-emu：
 
 ```bash
 make
@@ -162,7 +162,7 @@ make qemu
 常用构建参数：
 
 ```bash
-# CModel Debug 构建：-O0、调试信息和 AddressSanitizer
+# Dayan-emu Debug 构建：-O0、调试信息和 AddressSanitizer
 make clean
 make BUILD_TYPE=Debug
 
@@ -177,8 +177,8 @@ make clean
 make NPU_QEMU_BIN=/path/to/compatible-qemu
 ```
 
-`NPU_QEMU_BIN` 的绝对路径会在编译 CModel 时写入默认启动配置。更换该变量后应
-先执行 `make clean`，再重新构建 `bin/rvt_emulator`。QEMU 子构建不会继承 CModel 的 sanitizer、
+`NPU_QEMU_BIN` 的绝对路径会在编译 Dayan-emu 时写入默认启动配置。更换该变量后应
+先执行 `make clean`，再重新构建 `bin/rvt_emulator`。QEMU 子构建不会继承 Dayan-emu 的 sanitizer、
 `-march` 或 C/C++ 语言标准选项。
 
 ## 运行
@@ -191,8 +191,8 @@ make NPU_QEMU_BIN=/path/to/compatible-qemu
 
 - Core 数量范围为 1～8，默认为 1。
 - `-c/--cores` 必须放在自定义 QEMU 命令之前。
-- CModel 总会向 QEMU 传递与 Core 数一致的 `-smp N`。如果同时指定 `-c` 和
-  QEMU `-smp`，以 `-c` 为准；只指定 `-smp` 时，CModel 会采用该值。
+- Dayan-emu 总会向 QEMU 传递与 Core 数一致的 `-smp N`。如果同时指定 `-c` 和
+  QEMU `-smp`，以 `-c` 为准；只指定 `-smp` 时，Dayan-emu 会采用该值。
 - 自定义前端必须实现本仓库的共享内存和三路 Socket 协议。普通的上游 QEMU
   不能直接替代定制 `dl-riscv64`。
 
@@ -271,14 +271,14 @@ continue
 ### QEMU 日志
 
 设置 `RVTNG_QEMU_LOG` 可将 QEMU 子进程的标准输出和标准错误写入指定文件；
-CModel 自身仍输出到当前终端：
+Dayan-emu 自身仍输出到当前终端：
 
 ```bash
 RVTNG_QEMU_LOG=/tmp/rvtng-qemu.log ./bin/rvt_emulator -c 4
 ```
 
 通常应通过 `rvt_emulator` 启动 QEMU，而不是单独运行 `dl-riscv64`：后者依赖由
-CModel 预先创建的共享内存和 IPC 对端。CModel 退出时会通过 parent-death signal
+Dayan-emu 预先创建的共享内存和 IPC 对端。Dayan-emu 退出时会通过 parent-death signal
 终止仍存活的 QEMU 子进程，避免遗留孤儿进程。
 
 ## 测试与清理
@@ -289,7 +289,7 @@ CModel 预先创建的共享内存和 IPC 对端。CModel 退出时会通过 par
 make test
 ```
 
-清理 CModel 产物：
+清理 Dayan-emu 产物：
 
 ```bash
 make clean
