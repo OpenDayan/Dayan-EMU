@@ -8,7 +8,7 @@
 #include <mutex>
 #include <string_view>
 
-namespace RVTNG {
+namespace DAYAN {
 
 enum class interrupt_source_t : uint16_t {
     neomat_uram_a_read_range = 0,
@@ -46,7 +46,7 @@ enum class interrupt_source_t : uint16_t {
     neovec_decode_error = 32,
     instruction_decode_error = 33,
     neomat_datatype_error = 34,
-    // 对齐默认 RVTNGTop 的源表；裁剪执行单元的 RTL 使用其生成的 interrupts.csv。
+    // 对齐默认 Dayan 顶层的源表；裁剪执行单元的 RTL 使用其生成的 interrupts.csv。
     resource_scheduler_error = 38,
 };
 
@@ -89,4 +89,4 @@ inline bool is_interrupt_tcsr(uint64_t inst)
         ((inst >> 23) & 0x0f) == INTERRUPT_TCSR_UNIT;
 }
 
-} // namespace RVTNG
+} // namespace DAYAN

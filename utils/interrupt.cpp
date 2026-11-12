@@ -4,7 +4,7 @@
 #include <array>
 #include <utility>
 
-namespace RVTNG {
+namespace DAYAN {
 namespace {
 
 constexpr std::array<std::string_view, 35> kInterruptSourceNames = {
@@ -170,4 +170,4 @@ uint64_t interrupt_controller_t::count() const
     return interrupt_count_;
 }
 
-} // namespace RVTNG
+} // namespace DAYAN

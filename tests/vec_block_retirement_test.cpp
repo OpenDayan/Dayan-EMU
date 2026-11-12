@@ -19,19 +19,19 @@ bool check(bool condition, const char* message)
 
 int main()
 {
-    RVTNG::vec_tcsr_t outer_tcsr{};
+    DAYAN::vec_tcsr_t outer_tcsr{};
     outer_tcsr.dim2 = 1;
     outer_tcsr.dim3 = 2;
     outer_tcsr.dim4 = 1;
     outer_tcsr.dim5 = 1;
-    if(!check(RVTNG::vec_outer_coord_count(outer_tcsr) == 24,
+    if(!check(DAYAN::vec_outer_coord_count(outer_tcsr) == 24,
             "outer coordinate count must include dimensions 2 through 5")) {
         return 1;
     }
     std::vector<unsigned> seen(24);
     for(uint64_t job = 0; job < 4; ++job) {
         for(uint64_t index = job; index < seen.size(); index += 4) {
-            const RVTNG::vec_coord_t coord = RVTNG::vec_outer_coord(outer_tcsr, index);
+            const DAYAN::vec_coord_t coord = DAYAN::vec_outer_coord(outer_tcsr, index);
             const uint64_t flattened = coord.d2 + 2 * (coord.d3 + 3 * (coord.d4 + 2 * coord.d5));
             ++seen[flattened];
         }
@@ -41,8 +41,8 @@ int main()
         return 1;
     }
 
-    RVTNG::vec_block_retirement_t blocks;
-    RVTNG::vec_scoreboard_fences_t fences;
+    DAYAN::vec_block_retirement_t blocks;
+    DAYAN::vec_scoreboard_fences_t fences;
     std::vector<std::string> callbacks;
 
     auto drain = [&]() {
@@ -50,9 +50,9 @@ int main()
             [&](uint64_t target) {
                 return blocks.reached(target);
             },
-            [&](const RVTNG::vec_scoreboard_fence_t& fence) {
+            [&](const DAYAN::vec_scoreboard_fence_t& fence) {
                 callbacks.push_back(
-                    fence.kind == RVTNG::vec_scoreboard_fence_kind_t::produce
+                    fence.kind == DAYAN::vec_scoreboard_fence_kind_t::produce
                         ? "produce:" + std::to_string(fence.data)
                         : "bar:" + std::to_string(fence.rd));
             });
@@ -69,7 +69,7 @@ int main()
     }
     fences.enqueue({
         empty_target,
-        RVTNG::vec_scoreboard_fence_kind_t::produce,
+        DAYAN::vec_scoreboard_fence_kind_t::produce,
         7,
         0,
         0
@@ -84,14 +84,14 @@ int main()
     const uint64_t first_target = blocks.snapshot();
     fences.enqueue({
         first_target,
-        RVTNG::vec_scoreboard_fence_kind_t::produce,
+        DAYAN::vec_scoreboard_fence_kind_t::produce,
         11,
         0,
         0
     });
     fences.enqueue({
         first_target,
-        RVTNG::vec_scoreboard_fence_kind_t::bar,
+        DAYAN::vec_scoreboard_fence_kind_t::bar,
         0,
         98,
         3
@@ -99,7 +99,7 @@ int main()
     const uint64_t block1 = blocks.issue();
     fences.enqueue({
         blocks.snapshot(),
-        RVTNG::vec_scoreboard_fence_kind_t::produce,
+        DAYAN::vec_scoreboard_fence_kind_t::produce,
         13,
         99,
         5
@@ -146,7 +146,7 @@ int main()
     }
 
     bool rejected_out_of_order = false;
-    RVTNG::vec_block_retirement_t ordering;
+    DAYAN::vec_block_retirement_t ordering;
     ordering.issue();
     ordering.issue();
     try {

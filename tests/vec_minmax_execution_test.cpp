@@ -51,7 +51,7 @@ std::array<uint32_t, 64> run_case(
     const std::array<uint32_t, 64>& input_b,
     uint32_t operation)
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     std::vector<uint8_t> uram(1024 * 1024);
     std::memcpy(uram.data() + INPUT_A_ADDR, input_a.data(), sizeof(input_a));

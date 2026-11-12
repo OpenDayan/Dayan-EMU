@@ -1,5 +1,5 @@
-#ifndef RVTNG_THREAD_SAFE_QUEUE_H
-#define RVTNG_THREAD_SAFE_QUEUE_H
+#ifndef DAYAN_THREAD_SAFE_QUEUE_H
+#define DAYAN_THREAD_SAFE_QUEUE_H
 
 #include <queue>
 #include <mutex>
@@ -9,7 +9,7 @@
 #include <utility>
 #include <stdexcept>
 
-namespace RVTNG {
+namespace DAYAN {
 
 template<typename T, size_t Capacity>
 class MPMCQueue {
@@ -227,6 +227,6 @@ private:
     bool stopped_ = false;
 };
 
-} // namespace RVTNG
+} // namespace DAYAN
 
-#endif // RVTNG_THREAD_SAFE_QUEUE_H
+#endif // DAYAN_THREAD_SAFE_QUEUE_H

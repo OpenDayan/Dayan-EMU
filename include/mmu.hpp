@@ -1,5 +1,5 @@
-#ifndef RVTNG_MMU_HPP
-#define RVTNG_MMU_HPP
+#ifndef DAYAN_MMU_HPP
+#define DAYAN_MMU_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -9,23 +9,23 @@
 #include <vector>
 
 // The behavioral ClusterMMU implementation lives in the shared C core
-// hw/riscv/rvtng_mmu_core.c (built from deps/npu-qemu and also linked by
+// hw/riscv/dayan_mmu_core.c (built from deps/npu-qemu and also linked by
 // the QEMU device).  This class is a C++ shell over it: per-instance
 // thread safety, the std::function PTE-reader bridge and the Dayan-emu-side
 // enum/result surface.  The access, fault, page-size and PTE-response
 // enums mirror the core's numerically, so conversion is a static_cast.
-#include "hw/riscv/rvtng_mmu_core.h"
+#include "hw/riscv/dayan_mmu_core.h"
 
-namespace RVTNG {
+namespace DAYAN {
 
 // ClusterMMU uses 56-bit physical addresses.  Keep all public results masked
 // to this width so host pointer arithmetic never accidentally becomes part of
 // the architectural address.
-constexpr uint64_t MMU_PA_MASK = RVTNG_MMU_PA_MASK;
-constexpr uint64_t MMU_VA_MASK = RVTNG_MMU_VA_MASK;
-constexpr uint64_t MMU_PAGE_OFFSET_MASK = RVTNG_MMU_PAGE_MASK;
-constexpr uint64_t MMU_DRAM_BASE = RVTNG_MMU_DRAM_BASE;
-constexpr size_t MMU_DEFAULT_DRAM_SIZE = RVTNG_MMU_DEFAULT_DRAM_SIZE;
+constexpr uint64_t MMU_PA_MASK = DAYAN_MMU_PA_MASK;
+constexpr uint64_t MMU_VA_MASK = DAYAN_MMU_VA_MASK;
+constexpr uint64_t MMU_PAGE_OFFSET_MASK = DAYAN_MMU_PAGE_MASK;
+constexpr uint64_t MMU_DRAM_BASE = DAYAN_MMU_DRAM_BASE;
+constexpr size_t MMU_DEFAULT_DRAM_SIZE = DAYAN_MMU_DEFAULT_DRAM_SIZE;
 
 enum class mmu_access_type_t : uint8_t {
     read,
@@ -162,22 +162,22 @@ private:
         mmu_pte_reader_t fn;
     };
 
-    static RvtngMmuPteRead pte_trampoline(void* opaque, uint64_t pa);
+    static DayanMmuPteRead pte_trampoline(void* opaque, uint64_t pa);
 
     // cfg == NULL uses the config image live at call entry; otherwise the
     // caller-pinned image from request.config.  Both run under the lock.
-    mmu_translation_result_t run_translation(const RvtngMmuCore* cfg,
+    mmu_translation_result_t run_translation(const DayanMmuCore* cfg,
                                              uint64_t va,
                                              mmu_access_type_t access,
                                              uint8_t port);
 
     mutable std::shared_mutex mutex_;
-    RvtngMmuCore core_;
+    DayanMmuCore core_;
     // The bridge must outlive every core_ PTW callback, so it lives in the
     // object and never moves; the callable itself rides inside the bridge.
     reader_bridge_t bridge_;
 };
 
-} // namespace RVTNG
+} // namespace DAYAN
 
-#endif // RVTNG_MMU_HPP
+#endif // DAYAN_MMU_HPP

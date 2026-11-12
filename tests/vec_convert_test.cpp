@@ -7,7 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 
-using namespace RVTNG;
+using namespace DAYAN;
 
 namespace {
 

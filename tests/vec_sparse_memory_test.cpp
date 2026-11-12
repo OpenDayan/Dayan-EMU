@@ -19,7 +19,7 @@ bool check(bool condition, const char* message)
 
 bool check_addresses()
 {
-    RVTNG::vec_sparse_memory_t memory, peer;
+    DAYAN::vec_sparse_memory_t memory, peer;
     for(uint64_t addr = 0; addr < capacity; addr += 4) {
         if(!check(memory.read_u32(addr) == 0, "initial contents")) { return false; }
         memory.write_u32(addr, addr + 1);
@@ -41,7 +41,7 @@ bool check_addresses()
 
 bool check_atomic_aliases()
 {
-    RVTNG::vec_sparse_memory_t memory;
+    DAYAN::vec_sparse_memory_t memory;
     memory.write_u32(64, UINT32_MAX);
     if(!check(memory.atomic_update_u32(capacity + 64, 2, 0) == UINT32_MAX &&
               memory.read_u32(64) == 1, "wrapped add returns the old word")) {
@@ -58,7 +58,7 @@ bool check_atomic_aliases()
 
 bool check_vector_boundary()
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
     constexpr uint32_t load = (0b010000u << 26) | 0x0b;
     constexpr uint32_t store = (0b010001u << 26) | 0x0b;
     constexpr uint32_t sparse = 1u << 12;

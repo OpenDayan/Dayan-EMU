@@ -4,7 +4,7 @@
         "name": "(gdb) Launch",
         "type": "cppdbg",
         "request": "launch",
-        "program": "${workspaceFolder}/bin/rvt_emulator",
+        "program": "${workspaceFolder}/bin/dayan-emu",
         "args": ["-c", "2"],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",

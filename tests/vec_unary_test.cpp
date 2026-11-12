@@ -35,7 +35,7 @@ bool check(bool condition, const char* message)
 
 int main()
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     for(uint8_t op = 1; op <= 3; op++) {
         const auto fields = decode_vec_unary(shift_raw(op, 31));

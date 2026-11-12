@@ -4,7 +4,7 @@
 #include <memory>
 #include <utility>
 
-namespace RVTNG {
+namespace DAYAN {
 
 namespace {
 
@@ -20,31 +20,31 @@ enum redirect_index_t {
 
 } // namespace
 
-RvtngMmuPteRead mmu_t::pte_trampoline(void* opaque, uint64_t pa)
+DayanMmuPteRead mmu_t::pte_trampoline(void* opaque, uint64_t pa)
 {
     auto* bridge = static_cast<reader_bridge_t*>(opaque);
     if(!bridge || !bridge->fn) {
         // Matches an all-zero page-table image: PTE reads succeed with 0.
-        RvtngMmuPteRead read = {RVTNG_MMU_PTE_OKAY, 0};
+        DayanMmuPteRead read = {DAYAN_MMU_PTE_OKAY, 0};
         return read;
     }
     const mmu_pte_read_result_t read = bridge->fn(pa);
-    RvtngMmuPteRead result = {
-        static_cast<RvtngMmuPteResponse>(read.response), read.data};
+    DayanMmuPteRead result = {
+        static_cast<DayanMmuPteResponse>(read.response), read.data};
     return result;
 }
 
 mmu_t::mmu_t(mmu_pte_reader_t reader)
 {
-    rvtng_mmu_core_init(&core_);
+    dayan_mmu_core_init(&core_);
     bridge_.fn = std::move(reader);
-    rvtng_mmu_core_set_reader(&core_, &mmu_t::pte_trampoline, &bridge_);
+    dayan_mmu_core_set_reader(&core_, &mmu_t::pte_trampoline, &bridge_);
 }
 
 mmu_t::mmu_t(uint8_t* dram, size_t dram_size, uint64_t dram_base)
 {
-    rvtng_mmu_core_init(&core_);
-    rvtng_mmu_core_bind_dram(&core_, dram, dram_base, dram_size);
+    dayan_mmu_core_init(&core_);
+    dayan_mmu_core_bind_dram(&core_, dram, dram_base, dram_size);
 }
 
 mmu_config_snapshot_t mmu_t::snapshot() const
@@ -72,26 +72,26 @@ mmu_request_t mmu_t::capture_request(uint64_t va, mmu_access_type_t access,
     mmu_request_t request;
     request.va = va & MMU_PA_MASK;
     request.access = access;
-    request.port = port < RVTNG_MMU_NUM_PORTS ? port : 0;
+    request.port = port < DAYAN_MMU_NUM_PORTS ? port : 0;
     request.config = snapshot();
     return request;
 }
 
-mmu_translation_result_t mmu_t::run_translation(const RvtngMmuCore* cfg,
+mmu_translation_result_t mmu_t::run_translation(const DayanMmuCore* cfg,
                                                 uint64_t va,
                                                 mmu_access_type_t access,
                                                 uint8_t port)
 {
-    RvtngMmuFault fault = RVTNG_MMU_FAULT_NONE;
-    RvtngMmuPageSize page_size = RVTNG_MMU_PAGE_4K;
-    RvtngMmuTranslateDetail detail;
+    DayanMmuFault fault = DAYAN_MMU_FAULT_NONE;
+    DayanMmuPageSize page_size = DAYAN_MMU_PAGE_4K;
+    DayanMmuTranslateDetail detail;
     detail.walk_depth = 0;
     detail.pte_snapshot = 0;
     detail.global_mapping = false;
     detail.redirected = false;
 
-    const uint64_t pa = rvtng_mmu_core_translate_full(
-        &core_, cfg, va, static_cast<RvtngMmuAccess>(access), port, &fault,
+    const uint64_t pa = dayan_mmu_core_translate_full(
+        &core_, cfg, va, static_cast<DayanMmuAccess>(access), port, &fault,
         &page_size, &detail);
 
     mmu_translation_result_t result;
@@ -118,7 +118,7 @@ mmu_translation_result_t mmu_t::translate(const mmu_request_t& request)
 {
     // Config-only image: the core reads TLB/PDC/transport from core_ and
     // masks the config fields into its own copy.
-    RvtngMmuCore cfg;
+    DayanMmuCore cfg;
     std::memset(&cfg, 0, sizeof(cfg));
     cfg.global_asid = request.config.asid;
     cfg.ptw_base = request.config.ptw_base;
@@ -143,7 +143,7 @@ void mmu_t::set_pte_reader(mmu_pte_reader_t reader)
     bridge_.fn = std::move(reader);
     // Re-registering also invalidates every cached translation, as the
     // PTW transport may now observe a different page-table image.
-    rvtng_mmu_core_set_reader(&core_, &mmu_t::pte_trampoline, &bridge_);
+    dayan_mmu_core_set_reader(&core_, &mmu_t::pte_trampoline, &bridge_);
 }
 
 void mmu_t::set_ptw_base(uint64_t value)
@@ -181,19 +181,19 @@ void mmu_t::set_redirects(const mmu_fault_redirect_config_t& value)
 bool mmu_t::write_register(uint16_t address, uint32_t data)
 {
     std::unique_lock lock(mutex_);
-    return rvtng_mmu_core_write_reg(&core_, address, data);
+    return dayan_mmu_core_write_reg(&core_, address, data);
 }
 
 uint32_t mmu_t::read_register(uint16_t address) const
 {
     std::shared_lock lock(mutex_);
-    return rvtng_mmu_core_read_reg(&core_, address);
+    return dayan_mmu_core_read_reg(&core_, address);
 }
 
 void mmu_t::flush(bool asid_selective, uint8_t asid)
 {
     std::unique_lock lock(mutex_);
-    rvtng_mmu_core_flush(&core_, asid_selective, asid);
+    dayan_mmu_core_flush(&core_, asid_selective, asid);
 }
 
 bool mmu_t::flush_done() const
@@ -217,7 +217,7 @@ uint8_t mmu_t::flush_error_code() const
 void mmu_t::acknowledge_flush()
 {
     std::unique_lock lock(mutex_);
-    rvtng_mmu_core_ack_flush(&core_);
+    dayan_mmu_core_ack_flush(&core_);
 }
 
 mmu_pte_reader_t mmu_t::make_dram_reader(uint8_t* dram, size_t dram_size,
@@ -225,16 +225,16 @@ mmu_pte_reader_t mmu_t::make_dram_reader(uint8_t* dram, size_t dram_size,
 {
     // The bound-image description must outlive the callable, and a
     // std::function must be copyable, hence the shared_ptr.
-    auto image = std::make_shared<RvtngMmuCore>();
-    rvtng_mmu_core_init(image.get());
-    rvtng_mmu_core_bind_dram(image.get(), dram, dram_base, dram_size);
+    auto image = std::make_shared<DayanMmuCore>();
+    dayan_mmu_core_init(image.get());
+    dayan_mmu_core_bind_dram(image.get(), dram, dram_base, dram_size);
     return [image](uint64_t physical_address) {
-        const RvtngMmuPteRead read =
-            rvtng_mmu_core_dram_read(image.get(), physical_address);
+        const DayanMmuPteRead read =
+            dayan_mmu_core_dram_read(image.get(), physical_address);
         return mmu_pte_read_result_t{
             static_cast<mmu_pte_read_result_t::response_t>(read.response),
             read.data};
     };
 }
 
-} // namespace RVTNG
+} // namespace DAYAN

@@ -1,6 +1,6 @@
 # Dayan-emu
 
-Dayan-emu 是 Dayan/RVTNG NPU 的功能级模拟器。它与仓库内定制的
+Dayan-emu 是 Dayan NPU 的功能级模拟器。它与仓库内定制的
 `npu-qemu` 配合运行：QEMU 负责 RISC-V 标量核、固件启动、SoC 外设和 Host
 接口，Dayan-emu 负责张量指令的取指、分发与 LSU/MAT/VEC/MACRO 功能执行。
 
@@ -11,7 +11,7 @@ DRAM、Tensor Context、Scoreboard 和张量异常/中断上报。
 
 ### QEMU 与 Dayan-emu 分离
 
-QEMU 没有链接进 Dayan-emu。`bin/rvt_emulator` 同时承担张量后端和进程启动器的
+QEMU 没有链接进 Dayan-emu。`bin/dayan-emu` 同时承担张量后端和进程启动器的
 职责：它先创建共享内存，再 `fork/exec` 一个独立的 QEMU 子进程，随后建立 IPC
 通道并运行各个张量执行单元。
 
@@ -21,7 +21,7 @@ flowchart LR
 
     subgraph QEMU[QEMU 子进程：标量前端]
         CPU[RISC-V 标量核与固件]
-        SoC[rvtng-v0 SoC / MMIO / CLINT]
+        SoC[dayan-v0 SoC / MMIO / CLINT]
         IQ[每 Core 张量指令与提交队列]
         FUSE[FUSE XDMA 接口]
         CPU --> IQ
@@ -29,7 +29,7 @@ flowchart LR
         FUSE <--> SoC
     end
 
-    subgraph DAYAN_EMU[rvt_emulator 主进程：张量后端]
+    subgraph DAYAN_EMU[dayan-emu 主进程：张量后端]
         Fetch[IPC 取指与提交]
         Dispatch[Core Context / 指令分发]
         Units[LSU · MAT · VEC · RVT64/MACRO]
@@ -48,7 +48,7 @@ flowchart LR
 在源码和 IPC 接口中，QEMU 被称为 **frontend**，Dayan-emu 被称为
 **backend**。一次张量指令的大致流程是：
 
-1. 固件在 QEMU 中执行。QEMU 遇到 RVTNG 张量指令后，将指令、`rd/rs1/rs2`
+1. 固件在 QEMU 中执行。QEMU 遇到 Dayan 张量指令后，将指令、`rd/rs1/rs2`
    寄存器值和 Core ID 放入对应 Core 的队列。
 2. Dayan-emu 轮询各 Core，通过 IPC 取走指令并交给 `core_context_t`。
 3. 指令被分发到 LSU、MAT、VEC 或 RVT64/MACRO；每个执行单元有独立执行线程，
@@ -61,9 +61,9 @@ flowchart LR
 
 | 资源 | 方向 | 用途 |
 | --- | --- | --- |
-| `/tmp/card0_rvt_inst_req` | Dayan-emu → QEMU | 请求指定 Core 的下一条张量指令 |
-| `/tmp/card0_rvt_inst_rsp` | QEMU → Dayan-emu | 返回有效标志、指令、操作数和时间戳 |
-| `/tmp/card0_rvt_msg` | 主要为 Dayan-emu → QEMU | 寄存器提交、中断电平更新；协议也保留内存读写消息 |
+| `/tmp/card0_dayan_inst_req` | Dayan-emu → QEMU | 请求指定 Core 的下一条张量指令 |
+| `/tmp/card0_dayan_inst_rsp` | QEMU → Dayan-emu | 返回有效标志、指令、操作数和时间戳 |
+| `/tmp/card0_dayan_msg` | 主要为 Dayan-emu → QEMU | 寄存器提交、中断电平更新；协议也保留内存读写消息 |
 | `/dram_shm_0` | 双方共享 | 4 GiB DRAM，Guest 基地址为 `0x8000_0000` |
 | `/uram_shm_<core>` | 双方共享 | 每 Core 1.5 MiB URAM；Guest 基地址为 `0x0080_0000 + core × 0x0020_0000` |
 
@@ -75,7 +75,7 @@ IPC Socket 和共享内存名称目前固定为 `card0`/上述名称，因此同
 
 ### QEMU 侧平台
 
-子模块中的 `rvtng-v0` Machine 提供 RISC-V Hart、Boot ROM、Mailbox、
+子模块中的 `dayan-v0` Machine 提供 RISC-V Hart、Boot ROM、Mailbox、
 NPU-to-Host Interrupt Handler、Dayan CLINT、Atomic Cache 窗口、每 Core URAM
 和共享 DRAM。QEMU 还会在 `/tmp/virtual_npu/` 挂载 FUSE 文件系统，向 Host
 Runtime 暴露：
@@ -150,7 +150,7 @@ make
 
 产物为：
 
-- `bin/rvt_emulator`
+- `bin/dayan-emu`
 - `deps/npu-qemu/build/dl-riscv64`
 
 根目录 `make` 会自动配置并增量构建 QEMU。也可以只构建 QEMU：
@@ -178,7 +178,7 @@ make NPU_QEMU_BIN=/path/to/compatible-qemu
 ```
 
 `NPU_QEMU_BIN` 的绝对路径会在编译 Dayan-emu 时写入默认启动配置。更换该变量后应
-先执行 `make clean`，再重新构建 `bin/rvt_emulator`。QEMU 子构建不会继承 Dayan-emu 的 sanitizer、
+先执行 `make clean`，再重新构建 `bin/dayan-emu`。QEMU 子构建不会继承 Dayan-emu 的 sanitizer、
 `-march` 或 C/C++ 语言标准选项。
 
 ## 运行
@@ -186,7 +186,7 @@ make NPU_QEMU_BIN=/path/to/compatible-qemu
 命令格式：
 
 ```text
-./bin/rvt_emulator [-c N|--cores N] [QEMU 可执行文件及参数...]
+./bin/dayan-emu [-c N|--cores N] [QEMU 可执行文件及参数...]
 ```
 
 - Core 数量范围为 1～8，默认为 1。
@@ -199,7 +199,7 @@ make NPU_QEMU_BIN=/path/to/compatible-qemu
 查看启动器帮助：
 
 ```bash
-./bin/rvt_emulator --help
+./bin/dayan-emu --help
 ```
 
 ### 默认调试模式
@@ -210,7 +210,7 @@ make NPU_QEMU_BIN=/path/to/compatible-qemu
 deps/npu-qemu/build/dl-riscv64 \
   -monitor null \
   -bios /workspace/npu-firmware/bl0/bootrom.elf \
-  -machine rvtng-v0 \
+  -machine dayan-v0 \
   -nographic \
   -m 4096 \
   -smp <Core 数> \
@@ -221,8 +221,8 @@ deps/npu-qemu/build/dl-riscv64 \
 等待 GDB：
 
 ```bash
-./bin/rvt_emulator          # 1 Core
-./bin/rvt_emulator -c 4     # 4 Core
+./bin/dayan-emu          # 1 Core
+./bin/dayan-emu -c 4     # 4 Core
 ```
 
 可使用 RISC-V GDB 连接：
@@ -237,11 +237,11 @@ continue
 固件不在默认位置，或不希望等待 GDB 时，将完整 QEMU 命令传给启动器：
 
 ```bash
-./bin/rvt_emulator -c 4 \
+./bin/dayan-emu -c 4 \
   ./deps/npu-qemu/build/dl-riscv64 \
   -monitor null \
   -bios /path/to/npu-firmware/bl0/bootrom.elf \
-  -machine rvtng-v0 \
+  -machine dayan-v0 \
   -nographic \
   -m 4096
 ```
@@ -253,12 +253,12 @@ continue
 不使用完整 Runtime、直接由 Boot ROM 加载裸机 Kernel 时，可使用：
 
 ```bash
-./bin/rvt_emulator \
+./bin/dayan-emu \
   ./deps/npu-qemu/build/dl-riscv64 \
   -monitor null \
   -bios /path/to/npu-firmware/bl0-noruntime/bootrom.elf \
   -kernel /path/to/npu-kernels/bin/kernels_pack.elf \
-  -machine rvtng-v0 \
+  -machine dayan-v0 \
   -nographic \
   -m 4096 \
   -serial none \
@@ -270,14 +270,14 @@ continue
 
 ### QEMU 日志
 
-设置 `RVTNG_QEMU_LOG` 可将 QEMU 子进程的标准输出和标准错误写入指定文件；
+设置 `DAYAN_QEMU_LOG` 可将 QEMU 子进程的标准输出和标准错误写入指定文件；
 Dayan-emu 自身仍输出到当前终端：
 
 ```bash
-RVTNG_QEMU_LOG=/tmp/rvtng-qemu.log ./bin/rvt_emulator -c 4
+DAYAN_QEMU_LOG=/tmp/dayan-qemu.log ./bin/dayan-emu -c 4
 ```
 
-通常应通过 `rvt_emulator` 启动 QEMU，而不是单独运行 `dl-riscv64`：后者依赖由
+通常应通过 `dayan-emu` 启动 QEMU，而不是单独运行 `dl-riscv64`：后者依赖由
 Dayan-emu 预先创建的共享内存和 IPC 对端。Dayan-emu 退出时会通过 parent-death signal
 终止仍存活的 QEMU 子进程，避免遗留孤儿进程。
 
@@ -321,8 +321,8 @@ fusermount3 -u /tmp/virtual_npu
 
 ### IPC 初始化反复重试或连接中断
 
-这通常表示 QEMU 在建立 Socket 前已经退出。检查终端或 `RVTNG_QEMU_LOG`，重点
-排查 Boot ROM、`rvtng-v0` Machine、FUSE 权限和共享内存配置。固定 Socket 名称
+这通常表示 QEMU 在建立 Socket 前已经退出。检查终端或 `DAYAN_QEMU_LOG`，重点
+排查 Boot ROM、`dayan-v0` Machine、FUSE 权限和共享内存配置。固定 Socket 名称
 也意味着不能并发启动两个实例。
 
 ### 清除上次运行留下的共享内存

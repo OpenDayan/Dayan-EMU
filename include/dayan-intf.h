@@ -13,8 +13,8 @@
  *
  * See the Mulan PSL v2 for more details.
  ***************************************************************************************/
-#ifndef RVTNG_INTF_H
-#define RVTNG_INTF_H
+#ifndef DAYAN_INTF_H
+#define DAYAN_INTF_H
 
 #include "utils.hpp"
 
@@ -38,26 +38,26 @@ typedef struct {
     uint64_t rs1;
     uint64_t rs2;
     uint64_t timestamp;
-} rvt_pack_t;
+} dayan_pack_t;
 
 typedef struct {
 	uint64_t rd;
 	uint64_t data;
     uint64_t timestamp;
-} rvt_commit_t;
+} dayan_commit_t;
 
 typedef struct {
     int fdReq;
     int fdRsp;
-} rvt_inst_socket_pair_t;
+} dayan_inst_socket_pair_t;
 
 typedef struct {
     int fd;
-} rvt_msg_socket_t;
+} dayan_msg_socket_t;
 
-#define RVT_MSG_SOCKET_PATH "/tmp/card0_rvt_msg"
-#define RVT_INST_REQ_SOCKET_PATH "/tmp/card0_rvt_inst_req"
-#define RVT_INST_RSP_SOCKET_PATH "/tmp/card0_rvt_inst_rsp"
+#define DAYAN_MSG_SOCKET_PATH "/tmp/card0_dayan_msg"
+#define DAYAN_INST_REQ_SOCKET_PATH "/tmp/card0_dayan_inst_req"
+#define DAYAN_INST_RSP_SOCKET_PATH "/tmp/card0_dayan_inst_rsp"
 /* ClusterMMU config-sync socket : the Dayan-emu owns the listening end;
  * the QEMU front end pushes {0x20, addr, value}
  * register writes and {0x21, mode|asid<<8} flush events as 8-byte word
@@ -65,58 +65,58 @@ typedef struct {
  * and waits for one reply word (0 = cleared, 1 = busy/invalid).
  * Deliberately a separate socket from the position-framed
  * msg socket so the two protocols can never be cross-read. */
-#define RVT_MMU_SOCKET_PATH "/tmp/card0_rvt_mmu"
+#define DAYAN_MMU_SOCKET_PATH "/tmp/card0_dayan_mmu"
 
 // Frontend Service API
 int frontend_dram_read_service(char *buf, size_t size, off_t addr);
 int frontend_dram_write_service(char *buf, size_t size, off_t addr);
-int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg);
-int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg);
+int frontend_instruction_fetch_service(int coreIdx, dayan_pack_t* pkg);
+int frontend_instruction_commit_service(int coreIdx, dayan_commit_t* pkg);
 
-static inline void rvt_socket_fatal(const char *operation, const char *stage)
+static inline void dayan_socket_fatal(const char *operation, const char *stage)
 {
     int error = errno;
 
     fprintf(stderr,
-            "RVNPU IPC fatal: %s failed at %s: errno=%d (%s)\n",
+            "Dayan IPC fatal: %s failed at %s: errno=%d (%s)\n",
             operation, stage, error, strerror(error));
     fflush(stderr);
     exit(EXIT_FAILURE);
 }
 
-static inline void rvt_socket_push_or_fatal(int sockfd, uint64_t data,
+static inline void dayan_socket_push_or_fatal(int sockfd, uint64_t data,
                                             const char *stage)
 {
-    if (rvt_socket_push(sockfd, data) != 0) {
-        rvt_socket_fatal("send", stage);
+    if (dayan_socket_push(sockfd, data) != 0) {
+        dayan_socket_fatal("send", stage);
     }
 }
 
-static inline void rvt_socket_pop_or_fatal(int sockfd, uint64_t *data,
+static inline void dayan_socket_pop_or_fatal(int sockfd, uint64_t *data,
                                            const char *stage)
 {
-    if (rvt_socket_pop(sockfd, data) != 0) {
-        rvt_socket_fatal("receive", stage);
+    if (dayan_socket_pop(sockfd, data) != 0) {
+        dayan_socket_fatal("receive", stage);
     }
 }
 
 static inline void backend_init(int* fdMsg, int* fdInstReq, int* fdInstRsp) {
     int retry = 0;
-    while((*fdMsg = rvt_socket_client_init(RVT_MSG_SOCKET_PATH)) == -1) {
+    while((*fdMsg = dayan_socket_client_init(DAYAN_MSG_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Backend Init msg client Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInstReq = rvt_socket_client_init(RVT_INST_REQ_SOCKET_PATH)) == -1) {
+    while((*fdInstReq = dayan_socket_client_init(DAYAN_INST_REQ_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Backend Init inst req client Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInstRsp = rvt_socket_server_init(RVT_INST_RSP_SOCKET_PATH)) == -1) {
+    while((*fdInstRsp = dayan_socket_server_init(DAYAN_INST_RSP_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
@@ -127,21 +127,21 @@ static inline void backend_init(int* fdMsg, int* fdInstReq, int* fdInstRsp) {
 
 static inline void frontend_init(int* fdMsg, int* fdInstReq, int* fdInstRsp) {
     int retry = 0;
-    while((*fdMsg = rvt_socket_server_init(RVT_MSG_SOCKET_PATH)) == -1) {
+    while((*fdMsg = dayan_socket_server_init(DAYAN_MSG_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Frontend Init msg server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInstReq = rvt_socket_server_init(RVT_INST_REQ_SOCKET_PATH)) == -1) {
+    while((*fdInstReq = dayan_socket_server_init(DAYAN_INST_REQ_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
         debugf("Frontend Init inst req server Fail, retrying %d...\n", ++retry);
         usleep(500000);
     }
-    while((*fdInstRsp = rvt_socket_client_init(RVT_INST_RSP_SOCKET_PATH)) == -1) {
+    while((*fdInstRsp = dayan_socket_client_init(DAYAN_INST_RSP_SOCKET_PATH)) == -1) {
         if(retry >= 20) {
             exit(-1);
         }
@@ -151,28 +151,28 @@ static inline void frontend_init(int* fdMsg, int* fdInstReq, int* fdInstRsp) {
 }
 
 static inline void* frontend_serve_inst_loop(void* arg) {
-    rvt_inst_socket_pair_t* sockets = (rvt_inst_socket_pair_t*)arg;
+    dayan_inst_socket_pair_t* sockets = (dayan_inst_socket_pair_t*)arg;
     int fdInstReq = sockets->fdReq;
     int fdInstRsp = sockets->fdRsp;
     uint64_t msg;
     while(1) {
         // Waiting status;
-        rvt_socket_pop_or_fatal(fdInstReq, &msg,
+        dayan_socket_pop_or_fatal(fdInstReq, &msg,
                                 "frontend instruction request core index");
-        rvt_pack_t instPkg{};
+        dayan_pack_t instPkg{};
         int n = frontend_instruction_fetch_service(msg, &instPkg);
-        rvt_socket_push_or_fatal(fdInstRsp, n,
+        dayan_socket_push_or_fatal(fdInstRsp, n,
                                  "frontend instruction response valid flag");
         if(n != 0) {
-            rvt_socket_push_or_fatal(fdInstRsp, instPkg.inst,
+            dayan_socket_push_or_fatal(fdInstRsp, instPkg.inst,
                                      "frontend instruction response inst");
-            rvt_socket_push_or_fatal(fdInstRsp, instPkg.rd,
+            dayan_socket_push_or_fatal(fdInstRsp, instPkg.rd,
                                      "frontend instruction response rd");
-            rvt_socket_push_or_fatal(fdInstRsp, instPkg.rs1,
+            dayan_socket_push_or_fatal(fdInstRsp, instPkg.rs1,
                                      "frontend instruction response rs1");
-            rvt_socket_push_or_fatal(fdInstRsp, instPkg.rs2,
+            dayan_socket_push_or_fatal(fdInstRsp, instPkg.rs2,
                                      "frontend instruction response rs2");
-            rvt_socket_push_or_fatal(
+            dayan_socket_push_or_fatal(
                 fdInstRsp, instPkg.timestamp,
                 "frontend instruction response timestamp");
         }
@@ -253,38 +253,38 @@ static inline void cleanup_shm_ptr(const char* shm_name, void* ptr, size_t sz) {
     debugf("Cleaned up shared memory '%s'\n", shm_name);
 }
 static inline void* frontend_serve_msg_loop(void* arg) {
-    rvt_msg_socket_t *socket = (rvt_msg_socket_t *)arg;
+    dayan_msg_socket_t *socket = (dayan_msg_socket_t *)arg;
     int fdMsg = socket->fd;
     uint64_t msg;
     while(1) {
         // Waiting status;
-        rvt_socket_pop_or_fatal(fdMsg, &msg,
+        dayan_socket_pop_or_fatal(fdMsg, &msg,
                                 "frontend message opcode");
         if(msg == 0x0) { // Instruction Commit
             // Get CoreIdx
             uint64_t coreIdx;
-            rvt_commit_t commit_info;
-            rvt_socket_pop_or_fatal(fdMsg, &coreIdx,
+            dayan_commit_t commit_info;
+            dayan_socket_pop_or_fatal(fdMsg, &coreIdx,
                                     "frontend commit core index");
-            rvt_socket_pop_or_fatal(fdMsg, &commit_info.rd,
+            dayan_socket_pop_or_fatal(fdMsg, &commit_info.rd,
                                     "frontend commit destination register");
-            rvt_socket_pop_or_fatal(fdMsg, &commit_info.data,
+            dayan_socket_pop_or_fatal(fdMsg, &commit_info.data,
                                     "frontend commit data");
-            rvt_socket_pop_or_fatal(fdMsg, &commit_info.timestamp,
+            dayan_socket_pop_or_fatal(fdMsg, &commit_info.timestamp,
                                     "frontend commit timestamp");
             frontend_instruction_commit_service(coreIdx, &commit_info);
         } else if(msg == 0x10) { // Memory Read
             // Get Addr and Size
             uint64_t addr, size, buf;
-            rvt_socket_pop_or_fatal(fdMsg, &addr,
+            dayan_socket_pop_or_fatal(fdMsg, &addr,
                                     "frontend memory read address");
-            rvt_socket_pop_or_fatal(fdMsg, &size,
+            dayan_socket_pop_or_fatal(fdMsg, &size,
                                     "frontend memory read size");
             // Read Loop
             while(size) {
                 uint64_t rSz = size < 8 ? size : 8;
                 frontend_dram_read_service((char*)&buf, rSz, addr);
-                rvt_socket_push_or_fatal(fdMsg, buf,
+                dayan_socket_push_or_fatal(fdMsg, buf,
                                          "frontend memory read data");
                 addr += rSz;
                 size -= rSz;
@@ -292,14 +292,14 @@ static inline void* frontend_serve_msg_loop(void* arg) {
         } else if(msg == 0x11) { // Memory Write
             // Get Addr and Size
             uint64_t addr, size, buf;
-            rvt_socket_pop_or_fatal(fdMsg, &addr,
+            dayan_socket_pop_or_fatal(fdMsg, &addr,
                                     "frontend memory write address");
-            rvt_socket_pop_or_fatal(fdMsg, &size,
+            dayan_socket_pop_or_fatal(fdMsg, &size,
                                     "frontend memory write size");
             // Write Loop
             while(size) {
                 uint64_t rSz = size < 8 ? size : 8;
-                rvt_socket_pop_or_fatal(fdMsg, &buf,
+                dayan_socket_pop_or_fatal(fdMsg, &buf,
                                         "frontend memory write data");
                 frontend_dram_write_service((char*)&buf, rSz, addr);
                 addr += rSz;
@@ -313,15 +313,15 @@ static inline void* frontend_serve_msg_loop(void* arg) {
 // Backend API
 static inline int backend_dram_read(int fdMsg, char *buf, size_t size, size_t addr) {
     uint64_t t_buf;
-    rvt_socket_push_or_fatal(fdMsg, 0x10ull,
+    dayan_socket_push_or_fatal(fdMsg, 0x10ull,
                              "backend memory read opcode");
-    rvt_socket_push_or_fatal(fdMsg, (uint64_t)addr,
+    dayan_socket_push_or_fatal(fdMsg, (uint64_t)addr,
                              "backend memory read address");
-    rvt_socket_push_or_fatal(fdMsg, (uint64_t)size,
+    dayan_socket_push_or_fatal(fdMsg, (uint64_t)size,
                              "backend memory read size");
     while(size) {
         uint64_t rSz = size < 8 ? size : 8;
-        rvt_socket_pop_or_fatal(fdMsg, &t_buf,
+        dayan_socket_pop_or_fatal(fdMsg, &t_buf,
                                 "backend memory read data");
         memcpy(buf, &t_buf, rSz);
         buf += rSz;
@@ -331,64 +331,64 @@ static inline int backend_dram_read(int fdMsg, char *buf, size_t size, size_t ad
 }
 static inline int backend_dram_write(int fdMsg, char *buf, size_t size, off_t addr) {
     uint64_t t_buf;
-    rvt_socket_push_or_fatal(fdMsg, 0x11ull,
+    dayan_socket_push_or_fatal(fdMsg, 0x11ull,
                              "backend memory write opcode");
-    rvt_socket_push_or_fatal(fdMsg, (uint64_t)addr,
+    dayan_socket_push_or_fatal(fdMsg, (uint64_t)addr,
                              "backend memory write address");
-    rvt_socket_push_or_fatal(fdMsg, (uint64_t)size,
+    dayan_socket_push_or_fatal(fdMsg, (uint64_t)size,
                              "backend memory write size");
     while(size) {
         uint64_t rSz = size < 8 ? size : 8;
         memcpy(&t_buf, buf, rSz);
-        rvt_socket_push_or_fatal(fdMsg, t_buf,
+        dayan_socket_push_or_fatal(fdMsg, t_buf,
                                  "backend memory write data");
         buf += rSz;
         size -= rSz;
     }
     return 0;
 }
-static inline int backend_instruction_fetch(int fdInstReq, int fdInstRsp, int coreIdx, rvt_pack_t* pkg) {
+static inline int backend_instruction_fetch(int fdInstReq, int fdInstRsp, int coreIdx, dayan_pack_t* pkg) {
     uint64_t msg;
-    rvt_socket_push_or_fatal(fdInstReq, coreIdx,
+    dayan_socket_push_or_fatal(fdInstReq, coreIdx,
                              "backend instruction request core index");
-    rvt_socket_pop_or_fatal(fdInstRsp, &msg,
+    dayan_socket_pop_or_fatal(fdInstRsp, &msg,
                             "backend instruction response valid flag");
     if(msg == 0) {
         // No Instruction Valid.
         return 0;
     }
-    rvt_socket_pop_or_fatal(fdInstRsp, &(pkg->inst),
+    dayan_socket_pop_or_fatal(fdInstRsp, &(pkg->inst),
                             "backend instruction response inst");
-    rvt_socket_pop_or_fatal(fdInstRsp, &(pkg->rd),
+    dayan_socket_pop_or_fatal(fdInstRsp, &(pkg->rd),
                             "backend instruction response rd");
-    rvt_socket_pop_or_fatal(fdInstRsp, &(pkg->rs1),
+    dayan_socket_pop_or_fatal(fdInstRsp, &(pkg->rs1),
                             "backend instruction response rs1");
-    rvt_socket_pop_or_fatal(fdInstRsp, &(pkg->rs2),
+    dayan_socket_pop_or_fatal(fdInstRsp, &(pkg->rs2),
                             "backend instruction response rs2");
-    rvt_socket_pop_or_fatal(fdInstRsp, &(pkg->timestamp),
+    dayan_socket_pop_or_fatal(fdInstRsp, &(pkg->timestamp),
                             "backend instruction response timestamp");
     return 1;
 }
-static inline int backend_instruction_commit(int fdMsg, int coreIdx, const rvt_commit_t* pkg) {
-    rvt_socket_push_or_fatal(fdMsg, 0x0,
+static inline int backend_instruction_commit(int fdMsg, int coreIdx, const dayan_commit_t* pkg) {
+    dayan_socket_push_or_fatal(fdMsg, 0x0,
                              "backend instruction commit opcode");
-    rvt_socket_push_or_fatal(fdMsg, coreIdx,
+    dayan_socket_push_or_fatal(fdMsg, coreIdx,
                              "backend instruction commit core index");
-    rvt_socket_push_or_fatal(fdMsg, pkg->rd,
+    dayan_socket_push_or_fatal(fdMsg, pkg->rd,
                              "backend instruction commit register");
-    rvt_socket_push_or_fatal(fdMsg, pkg->data,
+    dayan_socket_push_or_fatal(fdMsg, pkg->data,
                              "backend instruction commit data");
-    rvt_socket_push_or_fatal(fdMsg, pkg->timestamp,
+    dayan_socket_push_or_fatal(fdMsg, pkg->timestamp,
                              "backend instruction commit timestamp");
     return 1;
 }
 
 static inline int backend_interrupt_update(int fdMsg, int coreIdx, int level) {
-    rvt_socket_push_or_fatal(fdMsg, 0x1,
+    dayan_socket_push_or_fatal(fdMsg, 0x1,
                              "backend interrupt opcode");
-    rvt_socket_push_or_fatal(fdMsg, coreIdx,
+    dayan_socket_push_or_fatal(fdMsg, coreIdx,
                              "backend interrupt core index");
-    rvt_socket_push_or_fatal(fdMsg, level != 0,
+    dayan_socket_push_or_fatal(fdMsg, level != 0,
                              "backend interrupt level");
     return 1;
 }

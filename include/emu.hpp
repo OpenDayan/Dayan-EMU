@@ -3,17 +3,17 @@
 
 #include "thread_safe_queue.h"
 #include "exec_unit.hpp"
-#include "rvtng-intf.h"
+#include "dayan-intf.h"
 
-namespace RVTNG {
+namespace DAYAN {
 
 // 仿真器后端基类实现
-class rvtng_backend_t {
+class dayan_backend_t {
 public:
     // 例化接口
-    rvtng_backend_t(const char* backend_name);
+    dayan_backend_t(const char* backend_name);
     // 释放接口
-    ~rvtng_backend_t();
+    ~dayan_backend_t();
 protected:
     // IPC 接口指针
     int fdMsg;

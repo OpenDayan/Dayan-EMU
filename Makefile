@@ -1,7 +1,7 @@
 # 根目录 Makefile
 
 # 项目配置
-PROJECT_NAME := rvt_emulator
+PROJECT_NAME := dayan-emu
 SUB_DIRS := emu rvt64 main utils
 BUILD_DIR := build
 OUTPUT_DIR := bin
@@ -14,9 +14,9 @@ NPU_QEMU_ENV := env -u CC -u CXX -u AR -u CFLAGS -u CXXFLAGS \
 	-u CPPFLAGS -u LDFLAGS -u CROSS_COMPILE -u BUILD_TYPE
 # Shared ClusterMMU behavioral core, owned by the npu-qemu tree and also
 # linked into this emulator.
-MMU_CORE_SRC := $(NPU_QEMU_DIR)/hw/riscv/rvtng_mmu_core.c
-MMU_CORE_HDR := $(NPU_QEMU_DIR)/include/hw/riscv/rvtng_mmu_core.h
-MMU_CORE_OBJ := $(BUILD_DIR)/rvtng_mmu_core.o
+MMU_CORE_SRC := $(NPU_QEMU_DIR)/hw/riscv/dayan_mmu_core.c
+MMU_CORE_HDR := $(NPU_QEMU_DIR)/include/hw/riscv/dayan_mmu_core.h
+MMU_CORE_OBJ := $(BUILD_DIR)/dayan_mmu_core.o
 
 .PHONY: all clean distclean help test deps qemu force-npu-qemu-build $(SUB_DIRS)
 
@@ -48,7 +48,7 @@ endif
 
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
 CPPFLAGS += -I$(abspath $(NPU_QEMU_DIR))/include
-CPPFLAGS += -DRVTNG_DEFAULT_QEMU=\"$(abspath $(NPU_QEMU_BIN))\"
+CPPFLAGS += -DDAYAN_DEFAULT_QEMU=\"$(abspath $(NPU_QEMU_BIN))\"
 
 # 导出变量到子 Makefile
 export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE BUILD_TYPE

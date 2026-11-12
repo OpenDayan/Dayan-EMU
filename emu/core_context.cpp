@@ -1,74 +1,74 @@
 #include "core_context.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 
 // Constructor: Initialize all core components
 core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
                                uint8_t* dram, uint8_t* uram,
                                uint8_t *const *cluster_urams,
                                size_t cluster_core_count,
-                               RVTNG::resource_cluster_t& resource_cluster,
+                               DAYAN::resource_cluster_t& resource_cluster,
                                size_t dram_size,
                                uint64_t dram_base)
     : core_id(id), uram(uram), running(true) {
 
     // Create top-level execution unit
-    top = std::make_unique<RVTNG::exec_unit_t>();
-    tensor_context = std::make_unique<RVTNG::tensor_context_t>();
-    interrupts = std::make_unique<RVTNG::interrupt_controller_t>(
+    top = std::make_unique<DAYAN::exec_unit_t>();
+    tensor_context = std::make_unique<DAYAN::tensor_context_t>();
+    interrupts = std::make_unique<DAYAN::interrupt_controller_t>(
         [fdMsg, &msgMutex, core_id = id](bool level) {
             std::lock_guard<std::mutex> lock(msgMutex);
             backend_interrupt_update(fdMsg, core_id, level);
         });
 
     // Register Commit callback (using this core's core_id)
-    top->register_commit_callback([fdMsg, &msgMutex, core_id = id](const rvt_commit_t* pkg) {
+    top->register_commit_callback([fdMsg, &msgMutex, core_id = id](const dayan_commit_t* pkg) {
         std::lock_guard<std::mutex> lock(msgMutex);
         backend_instruction_commit(fdMsg, core_id, pkg);
     });
 
     // Create Scoreboard queue
     scoreboard = std::make_unique<
-        RVTNG::MPMCQueue<RVTNG::scoreboard_entry_t, 32>>();
+        DAYAN::MPMCQueue<DAYAN::scoreboard_entry_t, 32>>();
     top->register_scoreboard_callback([&sb = *scoreboard](const uint64_t entry) {
-        sb.enqueue(RVTNG::scoreboard_entry_t{entry, 0});
+        sb.enqueue(DAYAN::scoreboard_entry_t{entry, 0});
     });
-    resource_scheduler = std::make_unique<RVTNG::resource_scheduler_t>(
+    resource_scheduler = std::make_unique<DAYAN::resource_scheduler_t>(
         resource_cluster, *scoreboard, interrupts.get());
     top->register_resource_produce_callback(
         resource_scheduler.get(),
-        &RVTNG::resource_scheduler_t::complete_produce);
+        &DAYAN::resource_scheduler_t::complete_produce);
 
     // Create one MMU/cache context per core.  The PTW reader observes the
     // shared DRAM image; reset defaults leave the full-range identity FixMap
     // enabled, preserving the pre-MMU Dayan-emu behaviour until software
     // programs the register image exposed by core_context_t::mmu.
-    mmu = std::make_unique<RVTNG::mmu_t>(dram, dram_size, dram_base);
+    mmu = std::make_unique<DAYAN::mmu_t>(dram, dram_size, dram_base);
 
     // Create execution units (each core has its own URAM, but shares DRAM)
-    lsu = std::make_unique<RVTNG::lsu_t>(top.get(), uram, dram,
+    lsu = std::make_unique<DAYAN::lsu_t>(top.get(), uram, dram,
                                         cluster_urams,
                                         cluster_core_count,
                                         tensor_context.get(), interrupts.get(),
                                         mmu.get(), dram_size, dram_base,
                                         static_cast<uint8_t>(4 + (id & 0x3)));
-    mat = std::make_unique<RVTNG::mat_t>(top.get(), uram,
+    mat = std::make_unique<DAYAN::mat_t>(top.get(), uram,
                                         tensor_context.get(), interrupts.get());
-    vec = std::make_unique<RVTNG::vec_t>(top.get(), uram, 16,
+    vec = std::make_unique<DAYAN::vec_t>(top.get(), uram, 16,
                                         tensor_context.get(), interrupts.get());
-    legacy = std::make_unique<RVTNG::rvt64_t>(top.get(), uram,
+    legacy = std::make_unique<DAYAN::rvt64_t>(top.get(), uram,
                                               tensor_context.get(), interrupts.get());
 
     // Register Scoreboard Issue callback
     top->register_issue_callback(
         [top_ptr = top.get(), &sb = *scoreboard,
-         scheduler = resource_scheduler.get()](const rvt_pack_t* inst) {
+         scheduler = resource_scheduler.get()](const dayan_pack_t* inst) {
         const uint32_t unit = (inst->inst >> 23) & 0x0f;
         const uint32_t address = (inst->inst >> 13) & 0x3ff;
-        const bool is_sb = rvt::is_base(static_cast<uint32_t>(inst->inst)) &&
-            unit == RVT_UNIT_BASE && address == RVT_UNIT_BASE;
+        const bool is_sb = dayan::is_base(static_cast<uint32_t>(inst->inst)) &&
+            unit == DAYAN_UNIT_BASE && address == DAYAN_UNIT_BASE;
         if(!is_sb) return 0ul;
         if(inst->inst & 0b1000000000000) {
-            rvt_commit_t cmt_pack;
+            dayan_commit_t cmt_pack;
             cmt_pack.timestamp = inst->timestamp;
             cmt_pack.rd = (inst->inst >> 7) & 0x1f;
             auto p = sb.try_dequeue();
@@ -89,17 +89,17 @@ core_context_t::core_context_t(int id, int fdMsg, std::mutex& msgMutex,
     });
 
     // Start execution threads
-    lsu_exec_thread = std::thread(&RVTNG::lsu_t::execute, lsu.get());
-    mat_exec_thread = std::thread(&RVTNG::mat_t::execute, mat.get());
-    vec_exec_thread = std::thread(&RVTNG::vec_t::execute, vec.get());
-    legacy_exec_thread = std::thread(&RVTNG::rvt64_t::execute, legacy.get());
+    lsu_exec_thread = std::thread(&DAYAN::lsu_t::execute, lsu.get());
+    mat_exec_thread = std::thread(&DAYAN::mat_t::execute, mat.get());
+    vec_exec_thread = std::thread(&DAYAN::vec_t::execute, vec.get());
+    legacy_exec_thread = std::thread(&DAYAN::rvt64_t::execute, legacy.get());
 }
 
-ulong core_context_t::issue_global(const rvt_pack_t* inst) {
-    if(RVTNG::is_context_write(inst->inst)) {
+ulong core_context_t::issue_global(const dayan_pack_t* inst) {
+    if(DAYAN::is_context_write(inst->inst)) {
         const uint16_t address = (inst->inst >> 13) & 0x3ff;
         if(!tensor_context->write(address, inst->rd)) {
-            interrupts->raise(RVTNG::interrupt_source_t::resource_scheduler_error, address);
+            interrupts->raise(DAYAN::interrupt_source_t::resource_scheduler_error, address);
             return 1;
         }
         const auto context = tensor_context->snapshot();
@@ -110,9 +110,9 @@ ulong core_context_t::issue_global(const rvt_pack_t* inst) {
         return 1;
     }
 
-    if(RVTNG::is_context_read(inst->inst)) {
+    if(DAYAN::is_context_read(inst->inst)) {
         const uint16_t address = (inst->inst >> 13) & 0x3ff;
-        rvt_commit_t response{};
+        dayan_commit_t response{};
         response.rd = (inst->inst >> 7) & 0x1f;
         response.data = tensor_context->read(address);
         response.timestamp = inst->timestamp;
@@ -120,11 +120,11 @@ ulong core_context_t::issue_global(const rvt_pack_t* inst) {
         return 1;
     }
 
-    if(RVTNG::is_interrupt_tcsr(inst->inst)) {
+    if(DAYAN::is_interrupt_tcsr(inst->inst)) {
         const uint16_t address = (inst->inst >> 13) & 0x3ff;
         const bool read = ((inst->inst >> 12) & 1) != 0;
         if(read) {
-            rvt_commit_t response{};
+            dayan_commit_t response{};
             response.rd = (inst->inst >> 7) & 0x1f;
             response.data = interrupts->read(address);
             response.timestamp = inst->timestamp;
@@ -135,14 +135,14 @@ ulong core_context_t::issue_global(const rvt_pack_t* inst) {
         return 1;
     }
 
-    if(rvt::is_base(static_cast<uint32_t>(inst->inst)) &&
-       ((inst->inst >> 23) & 0x0f) == RVT_UNIT_BASE) {
+    if(dayan::is_base(static_cast<uint32_t>(inst->inst)) &&
+       ((inst->inst >> 23) & 0x0f) == DAYAN_UNIT_BASE) {
         const uint16_t address = (inst->inst >> 13) & 0x3ff;
         if(resource_scheduler->handles(address)) {
             const bool read = ((inst->inst >> 12) & 1) != 0;
             bool accepted = true;
             if(read) {
-                rvt_commit_t response{};
+                dayan_commit_t response{};
                 response.rd = (inst->inst >> 7) & 0x1f;
                 response.data = resource_scheduler->read(address);
                 response.timestamp = inst->timestamp;
@@ -152,8 +152,8 @@ ulong core_context_t::issue_global(const rvt_pack_t* inst) {
                                                      tensor_context->snapshot());
             }
             const bool deferred_produce = accepted && !read &&
-                address >= RVTNG::RESOURCE_PRODUCE_BASE &&
-                address < RVTNG::RESOURCE_PRODUCE_BASE + 16;
+                address >= DAYAN::RESOURCE_PRODUCE_BASE &&
+                address < DAYAN::RESOURCE_PRODUCE_BASE + 16;
             return deferred_produce ? 0 : 1;
         }
     }
@@ -183,7 +183,7 @@ core_context_t::~core_context_t() {
 
 // Fetch one instruction for this core
 void core_context_t::fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstMutex) {
-    rvt_pack_t inst;
+    dayan_pack_t inst;
     int count;
     {
         std::lock_guard<std::mutex> lock(fdInstMutex);
@@ -197,7 +197,7 @@ void core_context_t::fetch_one(int fdInstReq, int fdInstRsp, std::mutex& fdInstM
             v = top->issue(&inst);
         }
         if(v == 0) {
-            interrupts->raise(RVTNG::interrupt_source_t::instruction_decode_error,
+            interrupts->raise(DAYAN::interrupt_source_t::instruction_decode_error,
                               static_cast<uint32_t>(inst.inst));
         }
         if(v != 1) {

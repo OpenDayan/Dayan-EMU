@@ -10,27 +10,27 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 
-namespace RVTNG {
+namespace DAYAN {
     namespace {
         unsigned macro_type_bytes(uint8_t type) {
             switch(type) {
-            case RVT_TYPE_FP32:
-            case RVT_TYPE_S32:
-            case RVT_TYPE_U32:
+            case DAYAN_TYPE_FP32:
+            case DAYAN_TYPE_S32:
+            case DAYAN_TYPE_U32:
                 return 4;
-            case RVT_TYPE_BF16:
-            case RVT_TYPE_FP16:
-            case RVT_TYPE_S16:
-            case RVT_TYPE_U16:
+            case DAYAN_TYPE_BF16:
+            case DAYAN_TYPE_FP16:
+            case DAYAN_TYPE_S16:
+            case DAYAN_TYPE_U16:
                 return 2;
-            case RVT_TYPE_FP8_E4M3:
-            case RVT_TYPE_FP8_E5M2:
-            case RVT_TYPE_MX_FP8_E4M3:
-            case RVT_TYPE_MX_FP8_E5M2:
-            case RVT_TYPE_S8:
-            case RVT_TYPE_U8:
+            case DAYAN_TYPE_FP8_E4M3:
+            case DAYAN_TYPE_FP8_E5M2:
+            case DAYAN_TYPE_MX_FP8_E4M3:
+            case DAYAN_TYPE_MX_FP8_E5M2:
+            case DAYAN_TYPE_S8:
+            case DAYAN_TYPE_U8:
                 return 1;
             default:
                 return 0;
@@ -38,10 +38,10 @@ namespace RVTNG {
         }
     }
 
-    ulong rvt64_t::issue(const rvt_pack_t* inst) {
+    ulong rvt64_t::issue(const dayan_pack_t* inst) {
         uint32_t unit = (inst->inst >> 23) & 0x1f;
-        bool is_rvt64_tcsr = rvt::is_base(inst->inst) &&
-            (unit == RVT_UNIT_MACRO || is_unit_scoreboard(inst->inst, RVT_UNIT_MACRO));
+        bool is_rvt64_tcsr = dayan::is_base(inst->inst) &&
+            (unit == DAYAN_UNIT_MACRO || is_unit_scoreboard(inst->inst, DAYAN_UNIT_MACRO));
         bool is_rvt64 = ((inst->inst & 0x7f) == 0x3f) | is_rvt64_tcsr;
         if(!is_rvt64) {
             return 0;
@@ -68,7 +68,7 @@ namespace RVTNG {
     }
 
     void rvt64_t::enqueue_context(
-        const rvt_pack_t& inst,
+        const dayan_pack_t& inst,
         const tensor_context_snapshot_t& context_value) {
         inst_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
     }
@@ -134,7 +134,7 @@ namespace RVTNG {
         return true;
     }
 
-    bool rvt64_t::validate_instruction(const rvt_pack_t& inst,
+    bool rvt64_t::validate_instruction(const dayan_pack_t& inst,
                                        const rvt64_tcsr_t& control) const {
         const uint8_t extension = (inst.inst >> 25) & 0x7f;
         const uint8_t data_type = (inst.inst >> 32) & 0xff;
@@ -162,17 +162,17 @@ namespace RVTNG {
         };
 
         switch(extension) {
-        case RVT_MACRO_EXT_ELEMWISE: {
+        case DAYAN_MACRO_EXT_ELEMWISE: {
             const unsigned bytes = macro_type_bytes(data_type);
             return (broadcast == 2 || check_a(bytes, broadcast == 1)) &&
                 check_b(inst.rs2, bytes) && check_store(inst.rd, bytes);
         }
-        case RVT_MACRO_EXT_CONVERT:
+        case DAYAN_MACRO_EXT_CONVERT:
             return check_a(macro_type_bytes(data_type)) &&
                 check_store(inst.rd, macro_type_bytes(dst_type));
-        case RVT_MACRO_EXT_SFU:
+        case DAYAN_MACRO_EXT_SFU:
             return check_a(sizeof(float)) && check_store(inst.rd, sizeof(float));
-        case RVT_MACRO_EXT_REDUCE: {
+        case DAYAN_MACRO_EXT_REDUCE: {
             const unsigned bytes = macro_type_bytes(data_type);
             if(!check_a(bytes) || !check_store(inst.rd, bytes, true)) {
                 return false;
@@ -200,7 +200,7 @@ namespace RVTNG {
             uint8_t group = (inst.inst >> 12) & 0x7;
             uint8_t extension = (inst.inst >> 25) & 0x7f;
             uint8_t data_type = (inst.inst >> 32) & 0xff;
-            uint8_t operation = extension == RVT_MACRO_EXT_SFU
+            uint8_t operation = extension == DAYAN_MACRO_EXT_SFU
                 ? RVT64_SFU_OP(inst.inst) : RVT64_ELEM_OP(inst.inst);
             uint8_t Bd = (inst.inst >> 46) & 0x3;
 
@@ -210,17 +210,17 @@ namespace RVTNG {
             uint32_t unit = (inst.inst >> 23) & 0x1f;
             uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
 
-            bool is_macro_tcsr_write = rvt_is_base(inst.inst) && unit == RVT_UNIT_MACRO && ((inst.inst >> 12) & 0x1) == 0;
-            bool is_macro_tcsr_read  = rvt_is_base(inst.inst) && unit == RVT_UNIT_MACRO && ((inst.inst >> 12) & 0x1) == 1;
-            bool is_macro_sb_produce = rvt_is_base(inst.inst) &&
-                unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_MACRO &&
+            bool is_macro_tcsr_write = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_MACRO && ((inst.inst >> 12) & 0x1) == 0;
+            bool is_macro_tcsr_read  = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_MACRO && ((inst.inst >> 12) & 0x1) == 1;
+            bool is_macro_sb_produce = dayan_is_base(inst.inst) &&
+                unit == DAYAN_UNIT_BASE && tcsr_id == DAYAN_UNIT_MACRO &&
                 ((inst.inst >> 12) & 0x1) == 0;
-            bool is_macro_sb_bar = rvt_is_base(inst.inst) &&
-                unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_MACRO &&
+            bool is_macro_sb_bar = dayan_is_base(inst.inst) &&
+                unit == DAYAN_UNIT_BASE && tcsr_id == DAYAN_UNIT_MACRO &&
                 ((inst.inst >> 12) & 0x1) == 1;
-            const bool is_resource_produce = rvt_is_base(inst.inst) &&
-                unit == RVT_UNIT_BASE &&
-                tcsr_id == RESOURCE_PRODUCE_BASE + RVT_UNIT_MACRO &&
+            const bool is_resource_produce = dayan_is_base(inst.inst) &&
+                unit == DAYAN_UNIT_BASE &&
+                tcsr_id == RESOURCE_PRODUCE_BASE + DAYAN_UNIT_MACRO &&
                 ((inst.inst >> 12) & 0x1) == 0;
             if(is_macro_tcsr_write | is_macro_tcsr_read) {
                 debugf("MACRO: tcsr read write %d:\n", tcsr_id);
@@ -234,7 +234,7 @@ namespace RVTNG {
                             static_cast<uint32_t>(inst.inst));
                     }
                     if(is_macro_tcsr_read) {
-                        rvt_commit_t cmt_pack{};
+                        dayan_commit_t cmt_pack{};
                         cmt_pack.timestamp = inst.timestamp;
                         cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                         commit(&cmt_pack);
@@ -250,7 +250,7 @@ namespace RVTNG {
                     this->tcsr[*physical_group].checksum += 1;
                     debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[sub_address]);
                 } else {
-                    rvt_commit_t cmt_pack;
+                    dayan_commit_t cmt_pack;
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                     cmt_pack.data = _tcsr[sub_address];
@@ -265,7 +265,7 @@ namespace RVTNG {
                 continue;
             }
             if(is_macro_sb_bar) {
-                rvt_commit_t cmt_pack;
+                dayan_commit_t cmt_pack;
                 cmt_pack.timestamp = inst.timestamp;
                 cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                 cmt_pack.data = inst.rd;
@@ -274,10 +274,10 @@ namespace RVTNG {
                 continue;
             }
             if(is_resource_produce) {
-                resource_produce(RVT_UNIT_MACRO);
+                resource_produce(DAYAN_UNIT_MACRO);
                 continue;
             }
-            if(rvt_is_base(inst.inst)) {
+            if(dayan_is_base(inst.inst)) {
                 if(interrupts) {
                     interrupts->raise(interrupt_source_t::neovec_decode_error,
                                       static_cast<uint32_t>(inst.inst));
@@ -299,9 +299,9 @@ namespace RVTNG {
                     continue;
                 }
                 switch (extension) {
-                    case RVT_MACRO_EXT_ELEMWISE:
+                    case DAYAN_MACRO_EXT_ELEMWISE:
                         switch (data_type) {
-                            case RVT_TYPE_S32:
+                            case DAYAN_TYPE_S32:
                                 switch (operation) {
                                     case TX_ELEM_ADD:
                                         rvt64_handle_binary_operation<int32_t, int32_t>(
@@ -327,7 +327,7 @@ namespace RVTNG {
                                         break;
                                 }
                                 break;
-                            case RVT_TYPE_FP32:
+                            case DAYAN_TYPE_FP32:
                                 switch (operation) {
                                     case TX_ELEM_ADD:
                                         rvt64_handle_binary_operation<float, float>(
@@ -370,29 +370,29 @@ namespace RVTNG {
                                 break;
                         }
                         break;
-                    case RVT_MACRO_EXT_CONVERT:
+                    case DAYAN_MACRO_EXT_CONVERT:
                         switch (src_type) {
-                            case RVT_TYPE_FP32: // FP32
+                            case DAYAN_TYPE_FP32: // FP32
                                 switch (dst_type) {
-                                    case RVT_TYPE_S32: // S32
+                                    case DAYAN_TYPE_S32: // S32
                                         rvt64_handle_unary_operation<uint32_t, uint32_t>(
                                             [](uint32_t x) { return vec_fp32_to_s32(x, vec_rounding_mode_t::rne); },
                                             uram, inst.rs1, inst.rd, selected_tcsr
                                         );
                                         break;
-                                    case RVT_TYPE_BF16: // BF16
+                                    case DAYAN_TYPE_BF16: // BF16
                                         rvt64_handle_unary_operation<uint32_t, uint16_t>(
                                             [](uint32_t x) { return vec_fp32_to_bf16(x, vec_rounding_mode_t::rne); },
                                             uram, inst.rs1, inst.rd, selected_tcsr
                                         );
                                         break;
-                                    case RVT_TYPE_FP16: // FP16
+                                    case DAYAN_TYPE_FP16: // FP16
                                         rvt64_handle_unary_operation<uint32_t, uint16_t>(
                                             [](uint32_t x) { return vec_fp32_to_fp16(x, vec_rounding_mode_t::rne); },
                                             uram, inst.rs1, inst.rd, selected_tcsr
                                         );
                                         break;
-                                    case RVT_TYPE_MX_FP8_E4M3: // FP8E4M3
+                                    case DAYAN_TYPE_MX_FP8_E4M3: // FP8E4M3
                                         rvt64_handle_unary_operation<float, uint8_t>(
                                             FP32ToFP8<4>,
                                             uram, inst.rs1, inst.rd, selected_tcsr
@@ -408,7 +408,7 @@ namespace RVTNG {
                                 break;
                         }
                         break;
-                    case RVT_MACRO_EXT_SFU:
+                    case DAYAN_MACRO_EXT_SFU:
                         switch (operation) {
                             case TX_SFU_LOG2: // tx.sfu.log2
                                 rvt64_handle_unary_operation<float, float>(
@@ -451,9 +451,9 @@ namespace RVTNG {
                                 break;
                         }
                         break;
-                    case RVT_MACRO_EXT_REDUCE:
+                    case DAYAN_MACRO_EXT_REDUCE:
                         switch(data_type){
-                            case RVT_TYPE_S32: // S32
+                            case DAYAN_TYPE_S32: // S32
                                 switch (operation) {
                                     case TX_ELEM_MAX: // tx.int.reduce.max
                                         rvt64_handle_reduce_index_operation<int32_t, int32_t>(
@@ -478,7 +478,7 @@ namespace RVTNG {
                                         break;
                                 }
                                 break;
-                            case RVT_TYPE_FP32: // FP32
+                            case DAYAN_TYPE_FP32: // FP32
                                 switch (operation) {
                                     case TX_ELEM_MAX: // tx.fp.reduce.max
                                         rvt64_handle_reduce_index_operation<float, float>(

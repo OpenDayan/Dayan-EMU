@@ -18,10 +18,10 @@ $(BUILD_DIR)/tensor_context_interrupt_test: tensor_context_interrupt_test.cpp ..
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< ../utils/interrupt.cpp $(LDFLAGS) -o $@
 
-MMU_CORE_OBJ := $(BUILD_DIR)/rvtng_mmu_core.o
+MMU_CORE_OBJ := $(BUILD_DIR)/dayan_mmu_core.o
 
-$(MMU_CORE_OBJ): ../deps/npu-qemu/hw/riscv/rvtng_mmu_core.c \
-                 ../deps/npu-qemu/include/hw/riscv/rvtng_mmu_core.h
+$(MMU_CORE_OBJ): ../deps/npu-qemu/hw/riscv/dayan_mmu_core.c \
+                 ../deps/npu-qemu/include/hw/riscv/dayan_mmu_core.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 

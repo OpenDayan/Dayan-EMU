@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-namespace RVTNG {
+namespace DAYAN {
 
 static constexpr uint64_t kSwizzleUramBytes = 1536ull * 1024ull;
 static constexpr uint64_t kSwizzleLocalMask = (uint64_t{1} << 10) - 1;

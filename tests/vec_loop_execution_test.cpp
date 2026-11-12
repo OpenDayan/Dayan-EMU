@@ -29,7 +29,7 @@ void write_u64(std::vector<uint8_t>& memory, uint64_t address, uint64_t value)
 
 bool check_loop(uint64_t dim0, uint64_t dim1, unsigned phases, uint8_t selector)
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
     std::vector<uint8_t> uram(65536, 0xa5);
     auto expected = uram;
     vec_tcsr_t tcsr{};

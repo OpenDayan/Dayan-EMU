@@ -4,7 +4,7 @@
 
 #include "fputils.hpp"
 #include "mat.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 #include "swizzle.hpp"
 
 #include <algorithm>
@@ -34,9 +34,9 @@ size_t align32(size_t value) {
 
 constexpr uint16_t paired_type(uint8_t aBase, uint8_t bBase,
                                bool aMX = false, bool bMX = false) {
-    return RVT_MAT_PAIRED_DATATYPE(
-        RVT_MAT_OPERAND(aBase, aMX),
-        RVT_MAT_OPERAND(bBase, bMX));
+    return DAYAN_MAT_PAIRED_DATATYPE(
+        DAYAN_MAT_OPERAND(aBase, aMX),
+        DAYAN_MAT_OPERAND(bBase, bMX));
 }
 
 template<typename T>
@@ -48,7 +48,7 @@ template<typename T>
 void store_swizzled(std::vector<uint8_t>& memory, uint64_t address, uint64_t swizzle, T value) {
     const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&value);
     for (size_t index = 0; index < sizeof(value); ++index) {
-        memory[RVTNG::swizzle_addr(address + index, swizzle)] = bytes[index];
+        memory[DAYAN::swizzle_addr(address + index, swizzle)] = bytes[index];
     }
 }
 
@@ -64,7 +64,7 @@ T load_swizzled(const std::vector<uint8_t>& memory, uint64_t address, uint64_t s
     T value;
     uint8_t* bytes = reinterpret_cast<uint8_t*>(&value);
     for (size_t index = 0; index < sizeof(value); ++index) {
-        bytes[index] = memory[RVTNG::swizzle_addr(address + index, swizzle)];
+        bytes[index] = memory[DAYAN::swizzle_addr(address + index, swizzle)];
     }
     return value;
 }
@@ -77,7 +77,7 @@ void copy_to(std::vector<uint8_t>& memory, uint64_t address,
 void copy_to_swizzled(std::vector<uint8_t>& memory, uint64_t address,
                       uint64_t swizzle, const std::vector<uint8_t>& values) {
     for (size_t index = 0; index < values.size(); ++index) {
-        memory[RVTNG::swizzle_addr(address + index, swizzle)] = values[index];
+        memory[DAYAN::swizzle_addr(address + index, swizzle)] = values[index];
     }
 }
 
@@ -137,7 +137,7 @@ float run_one(uint64_t dataType, uint64_t k,
     copy_to(memory, kBScaleBase, bScales);
     store(memory, kCBase, initialC);
 
-    RVTNG::mat_tcsr_t control{};
+    DAYAN::mat_tcsr_t control{};
     control.k = k - 1;
     control.aStride = align32(aPayload.size());
     control.bStride = align32(bPayload.size());
@@ -146,7 +146,7 @@ float run_one(uint64_t dataType, uint64_t k,
     control.aScaleStride = 32;
     control.bScaleStride = 32;
 
-    assert(RVTNG::execute_matmul(memory.data(), control,
+    assert(DAYAN::execute_matmul(memory.data(), control,
                                 kABase, kBBase, kCBase,
                                 kAScaleBase, kBScaleBase, acc));
     return load<float>(memory, kCBase);
@@ -161,9 +161,9 @@ void test_instruction_decoder() {
     constexpr uint32_t setptr = 0x2000400bu | (3u << 15) |
         (5u << 20) | (6u << 25);
 
-    static_assert(RVT_TYPE_S4 == 0x18);
-    static_assert(RVT_TYPE_U4 == 0x19);
-    static_assert(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16)
+    static_assert(DAYAN_TYPE_S4 == 0x18);
+    static_assert(DAYAN_TYPE_U4 == 0x19);
+    static_assert(paired_type(DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_FP16)
                   == 0x8452);
     assert(IS_RVT_MAT_MM(mm));
     assert(IS_RVT_MAT_MMA(mma));
@@ -177,10 +177,10 @@ void test_instruction_decoder() {
     assert(IS_RVT_MAT_SETPTR(setptr));
     assert(!IS_RVT_MAT_MM_FAMILY(setptr));
     assert(IS_RVT_MAT_SETPTR(setptr | (1u << 7)));
-    assert(RVT_MAT_GROUP(setptr) == 6);
-    assert(rvt::is_mat(mm));
-    assert(rvt::is_mat(conv2d));
-    assert(rvt::is_mat(setptr));
+    assert(DAYAN_MAT_GROUP(setptr) == 6);
+    assert(dayan::is_mat(mm));
+    assert(dayan::is_mat(conv2d));
+    assert(dayan::is_mat(setptr));
 }
 
 void test_bf16_conv2d() {
@@ -190,7 +190,7 @@ void test_bf16_conv2d() {
     copy_to(memory, kBBase, pack_u16({0x40a0, 0x40c0}));
     copy_to(memory, kBBase + 32, pack_u16({0x40e0, 0x4100}));
 
-    RVTNG::conv_tcsr_t control{};
+    DAYAN::conv_tcsr_t control{};
     control.c = 2;
     control.wi = 2;
     control.hi = 1;
@@ -206,13 +206,13 @@ void test_bf16_conv2d() {
     control.coStride = 32;
     control.woStride = 32;
     control.hoStride = 64;
-    control.dataType = RVT_TYPE_BF16;
+    control.dataType = DAYAN_TYPE_BF16;
     control.dilationW = 1;
     control.dilationH = 1;
     control.strideW = 1;
     control.strideH = 1;
 
-    assert(RVTNG::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, false));
+    assert(DAYAN::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, false));
     const float expected[2][2] = {{17.0f, 23.0f}, {39.0f, 53.0f}};
     for (size_t w = 0; w < 2; ++w) {
         for (size_t co = 0; co < 2; ++co) {
@@ -220,7 +220,7 @@ void test_bf16_conv2d() {
         }
     }
 
-    assert(RVTNG::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, true));
+    assert(DAYAN::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, true));
     for (size_t w = 0; w < 2; ++w) {
         for (size_t co = 0; co < 2; ++co) {
             expect_close("Conv2DA", load<float>(memory, kCBase + w * 32 + co * sizeof(float)), 2.0f * expected[w][co]);
@@ -268,7 +268,7 @@ void test_bf16_conv2d_layout() {
         }
     }
 
-    RVTNG::conv_tcsr_t control{};
+    DAYAN::conv_tcsr_t control{};
     control.c = ciCount;
     control.wi = wiCount;
     control.hi = hiCount;
@@ -287,7 +287,7 @@ void test_bf16_conv2d_layout() {
     control.iSwizzleMBS = inputSwizzle;
     control.kSwizzleMBS = kernelSwizzle;
     control.oSwizzleMBS = outputSwizzle;
-    control.dataType = RVT_TYPE_BF16;
+    control.dataType = DAYAN_TYPE_BF16;
     control.padL = 1;
     control.padU = 1;
     control.dilationW = 1;
@@ -295,7 +295,7 @@ void test_bf16_conv2d_layout() {
     control.strideW = 2;
     control.strideH = 1;
 
-    assert(RVTNG::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, false));
+    assert(DAYAN::execute_conv2d(memory.data(), control, kABase, kBBase, kCBase, false));
     for (uint64_t ho = 0; ho < hoCount; ++ho) {
         for (uint64_t wo = 0; wo < woCount; ++wo) {
             for (uint64_t co = 0; co < coCount; ++co) {
@@ -333,7 +333,7 @@ void test_paired_scaled_conv2d() {
     copy_to(memory, kBBase, std::vector<uint8_t>(channels, 1));
     copy_to(memory, kAScaleBase, {0x7f, 0x80});
 
-    RVTNG::conv_tcsr_t control{};
+    DAYAN::conv_tcsr_t control{};
     control.c = channels;
     control.wi = 1;
     control.hi = 1;
@@ -355,13 +355,13 @@ void test_paired_scaled_conv2d() {
     control.scaleHkStride = 32;
     control.scaleCoStride = 32;
     control.dataType = paired_type(
-        RVT_MAT_TYPE_E4M3, RVT_MAT_TYPE_S8, true, false);
+        DAYAN_MAT_TYPE_E4M3, DAYAN_MAT_TYPE_S8, true, false);
     control.dilationW = 1;
     control.dilationH = 1;
     control.strideW = 1;
     control.strideH = 1;
 
-    assert(RVTNG::execute_conv2d(
+    assert(DAYAN::execute_conv2d(
         memory.data(), control, kABase, kBBase, kCBase,
         kAScaleBase, kBScaleBase, false));
     expect_close("paired scaled Conv2D", load<float>(memory, kCBase), 34.0f);
@@ -396,16 +396,16 @@ void test_scalar_decoders() {
 void test_bf16_and_fp16() {
     const auto bf16A = pack_u16({0x3fc0, 0xc000}); // 1.5, -2
     const auto bf16B = pack_u16({0x4000, 0x4040}); // 2, 3
-    expect_close("BF16", run_one(RVT_TYPE_BF16, 2, bf16A, bf16B), -3.0f);
+    expect_close("BF16", run_one(DAYAN_TYPE_BF16, 2, bf16A, bf16B), -3.0f);
 
     const auto fp16A = pack_u16({0x3e00, 0xc000}); // 1.5, -2
     const auto fp16B = pack_u16({0x4000, 0x4200}); // 2, 3
-    expect_close("FP16", run_one(RVT_TYPE_FP16, 2, fp16A, fp16B), -3.0f);
+    expect_close("FP16", run_one(DAYAN_TYPE_FP16, 2, fp16A, fp16B), -3.0f);
 }
 
 void test_paired_16bit_formats() {
     const uint16_t dataType = paired_type(
-        RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16);
+        DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_FP16);
     expect_close("paired BF16 x FP16",
                  run_one(dataType, 2,
                          pack_u16({0x3fc0, 0xc000}),
@@ -414,8 +414,8 @@ void test_paired_16bit_formats() {
 
     // FP16 fraction bits [2:0] are discarded before the common FP32 kernel.
     expect_close("FP16 low fraction truncation",
-                 run_one(paired_type(RVT_MAT_TYPE_FP16,
-                                     RVT_MAT_TYPE_BF16),
+                 run_one(paired_type(DAYAN_MAT_TYPE_FP16,
+                                     DAYAN_MAT_TYPE_BF16),
                          1, pack_u16({0x3c07}), pack_u16({0x3f80})),
                  1.0f);
 }
@@ -437,7 +437,7 @@ void test_tf32() {
 
     const auto one = pack_u32({0x3f800000});
     {
-        constexpr uint16_t type = paired_type(RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_TF32);
+        constexpr uint16_t type = paired_type(DAYAN_MAT_TYPE_TF32, DAYAN_MAT_TYPE_TF32);
         expect_close("TF32 truncates low fraction", run_one(type, 1, pack_u32({0x3f801fff}), one), 1.0f, 0.0f);
         expect_close("TF32 retains ten fraction bits", run_one(type, 1, pack_u32({0x3f802000}), one), 1.0f + 1.0f / 1024, 0.0f);
         expect_close("TF32 negative truncation", run_one(type, 1, pack_u32({0xbf801fff}), one), -1.0f, 0.0f);
@@ -451,18 +451,18 @@ void test_tf32() {
     }
 
     constexpr uint64_t swizzle = (uint64_t{7} << 16) | (uint64_t{2} << 8) | 3;
-    for (const uint8_t aType : {RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16}) {
-        for (const uint8_t bType : {RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16}) {
-            if (aType != RVT_MAT_TYPE_TF32 && bType != RVT_MAT_TYPE_TF32) {
+    for (const uint8_t aType : {DAYAN_MAT_TYPE_TF32, DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_FP16}) {
+        for (const uint8_t bType : {DAYAN_MAT_TYPE_TF32, DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_FP16}) {
+            if (aType != DAYAN_MAT_TYPE_TF32 && bType != DAYAN_MAT_TYPE_TF32) {
                 continue;
             }
             for (const uint64_t k : {127, 128, 129}) {
-                RVTNG::mat_tcsr_t control{};
+                DAYAN::mat_tcsr_t control{};
                 control.m = 2;
                 control.n = 4;
                 control.k = k - 1;
-                control.aStride = align32(k * (aType == RVT_MAT_TYPE_TF32 ? 4 : 2)) + 32;
-                control.bStride = align32(k * (bType == RVT_MAT_TYPE_TF32 ? 4 : 2)) + 64;
+                control.aStride = align32(k * (aType == DAYAN_MAT_TYPE_TF32 ? 4 : 2)) + 32;
+                control.bStride = align32(k * (bType == DAYAN_MAT_TYPE_TF32 ? 4 : 2)) + 64;
                 control.cStride = 64;
                 control.aSwizzleMBS = swizzle;
                 control.bSwizzleMBS = swizzle;
@@ -473,10 +473,10 @@ void test_tf32() {
                     for (uint64_t row = 0; row < rows; ++row) {
                         for (uint64_t inner = 0; inner < k; ++inner) {
                             const float value = sign * float(int((row * 3 + inner) % 13) - 6) / 16;
-                            if (type == RVT_MAT_TYPE_TF32) {
+                            if (type == DAYAN_MAT_TYPE_TF32) {
                                 store_swizzled(memory, base + row * stride + inner * 4, swizzle, value);
                             } else {
-                                const uint16_t raw = type == RVT_MAT_TYPE_BF16 ? FP32ToBF16(value) : FP32ToFP16(value);
+                                const uint16_t raw = type == DAYAN_MAT_TYPE_BF16 ? FP32ToBF16(value) : FP32ToFP16(value);
                                 store_swizzled(memory, base + row * stride + inner * 2, swizzle, raw);
                             }
                         }
@@ -485,7 +485,7 @@ void test_tf32() {
                 write(kABase, control.aStride, aType, 3, 1);
                 write(kBBase, control.bStride, bType, 5, -1);
                 for (const bool acc : {false, true}) {
-                    assert(RVTNG::execute_matmul(memory.data(), control, kABase, kBBase, kCBase, 0, 0, acc));
+                    assert(DAYAN::execute_matmul(memory.data(), control, kABase, kBBase, kCBase, 0, 0, acc));
                     for (uint64_t m = 0; m < 3; ++m) {
                         for (uint64_t n = 0; n < 5; ++n) {
                             float expected = 0;
@@ -504,11 +504,11 @@ void test_tf32() {
 
 void test_fp8() {
     expect_close("FP8 E4M3",
-                 run_one(RVT_TYPE_FP8_E4M3, 2,
+                 run_one(DAYAN_TYPE_FP8_E4M3, 2,
                          {0x3c, 0xc0}, {0x40, 0x44}),
                  -3.0f);
     expect_close("FP8 E5M2",
-                 run_one(RVT_TYPE_FP8_E5M2, 2,
+                 run_one(DAYAN_TYPE_FP8_E5M2, 2,
                          {0x3e, 0xc0}, {0x40, 0x42}),
                  -3.0f);
 }
@@ -521,33 +521,33 @@ void test_paired_8bit_formats() {
         std::string_view name;
     };
     const format_case_t formats[] = {
-        {RVT_MAT_TYPE_E0M7, 0x60, 0.75f, "E0M7"},
-        {RVT_MAT_TYPE_E1M6, 0x30, 1.5f, "E1M6"},
-        {RVT_MAT_TYPE_E2M5, 0x30, 1.5f, "E2M5"},
-        {RVT_MAT_TYPE_E3M4, 0x38, 1.5f, "E3M4"},
-        {RVT_MAT_TYPE_E4M3, 0x3c, 1.5f, "E4M3"},
-        {RVT_MAT_TYPE_E5M2, 0x3e, 1.5f, "E5M2"},
-        {RVT_MAT_TYPE_E6M1, 0x3f, 1.5f, "E6M1"},
+        {DAYAN_MAT_TYPE_E0M7, 0x60, 0.75f, "E0M7"},
+        {DAYAN_MAT_TYPE_E1M6, 0x30, 1.5f, "E1M6"},
+        {DAYAN_MAT_TYPE_E2M5, 0x30, 1.5f, "E2M5"},
+        {DAYAN_MAT_TYPE_E3M4, 0x38, 1.5f, "E3M4"},
+        {DAYAN_MAT_TYPE_E4M3, 0x3c, 1.5f, "E4M3"},
+        {DAYAN_MAT_TYPE_E5M2, 0x3e, 1.5f, "E5M2"},
+        {DAYAN_MAT_TYPE_E6M1, 0x3f, 1.5f, "E6M1"},
     };
     for(const format_case_t& format : formats) {
         expect_close(format.name,
-                     run_one(paired_type(format.base, RVT_MAT_TYPE_S8),
+                     run_one(paired_type(format.base, DAYAN_MAT_TYPE_S8),
                              1, {format.sample}, {2}),
                      2.0f * format.value);
         expect_close(format.name,
-                     run_one(paired_type(RVT_MAT_TYPE_S8, format.base),
+                     run_one(paired_type(DAYAN_MAT_TYPE_S8, format.base),
                              1, {2}, {format.sample}),
                      2.0f * format.value);
 
         constexpr size_t k = 33;
         expect_close(format.name,
-                     run_one(paired_type(format.base, RVT_MAT_TYPE_S8,
+                     run_one(paired_type(format.base, DAYAN_MAT_TYPE_S8,
                                          true, false),
                              k, std::vector<uint8_t>(k, format.sample),
                              std::vector<uint8_t>(k, 1), {0x7f, 0x80}),
                      34.0f * format.value);
         expect_close(format.name,
-                     run_one(paired_type(RVT_MAT_TYPE_S8, format.base,
+                     run_one(paired_type(DAYAN_MAT_TYPE_S8, format.base,
                                          false, true),
                              k, std::vector<uint8_t>(k, 1),
                              std::vector<uint8_t>(k, format.sample),
@@ -556,13 +556,13 @@ void test_paired_8bit_formats() {
     }
 
     expect_close("paired E0M7 x E6M1",
-                 run_one(paired_type(RVT_MAT_TYPE_E0M7,
-                                     RVT_MAT_TYPE_E6M1),
+                 run_one(paired_type(DAYAN_MAT_TYPE_E0M7,
+                                     DAYAN_MAT_TYPE_E6M1),
                          1, {0x60}, {0x3f}),
                  1.125f);
     expect_close("paired U8 x E5M2",
-                 run_one(paired_type(RVT_MAT_TYPE_U8,
-                                     RVT_MAT_TYPE_E5M2),
+                 run_one(paired_type(DAYAN_MAT_TYPE_U8,
+                                     DAYAN_MAT_TYPE_E5M2),
                          2, {3, 4}, {0x40, 0xc0}),
                  -2.0f);
 }
@@ -570,10 +570,10 @@ void test_paired_8bit_formats() {
 void test_mxfp8() {
     constexpr size_t k = 33;
     for (const auto& [dataType, one] : {
-             std::pair<uint64_t, uint8_t>{RVT_TYPE_MX_FP8_E4M3, 0x38},
-             std::pair<uint64_t, uint8_t>{RVT_TYPE_MX_FP8_E5M2, 0x3c}}) {
+             std::pair<uint64_t, uint8_t>{DAYAN_TYPE_MX_FP8_E4M3, 0x38},
+             std::pair<uint64_t, uint8_t>{DAYAN_TYPE_MX_FP8_E5M2, 0x3c}}) {
         const std::vector<uint8_t> payload(k, one);
-        expect_close(dataType == RVT_TYPE_MX_FP8_E4M3
+        expect_close(dataType == DAYAN_TYPE_MX_FP8_E4M3
                          ? "MXFP8 E4M3" : "MXFP8 E5M2",
                      run_one(dataType, k, payload, payload,
                              {0x7f, 0x80}, {0x7f, 0x7f}),
@@ -584,7 +584,7 @@ void test_mxfp8() {
 void test_independent_mx_operands() {
     constexpr size_t k = 33;
     const uint16_t dataType = paired_type(
-        RVT_MAT_TYPE_E4M3, RVT_MAT_TYPE_S8, true, false);
+        DAYAN_MAT_TYPE_E4M3, DAYAN_MAT_TYPE_S8, true, false);
     expect_close("paired one-sided MX scale",
                  run_one(dataType, k,
                          std::vector<uint8_t>(k, 0x38),
@@ -599,24 +599,24 @@ void test_int8_encodings() {
     const std::vector<uint8_t> b = {
         static_cast<uint8_t>(5), static_cast<uint8_t>(-2)};
     expect_close("S8 legacy encoding",
-                 run_one(RVT_TYPE_S8, 2, a, b), -23.0f);
+                 run_one(DAYAN_TYPE_S8, 2, a, b), -23.0f);
     expect_close("U8 legacy encoding",
-                 run_one(RVT_TYPE_U8, 1, {250}, {2}), 500.0f);
+                 run_one(DAYAN_TYPE_U8, 1, {250}, {2}), 500.0f);
 }
 
 void test_fp4_and_int4() {
     expect_close("FP4 E2M1",
-                 run_one(RVT_TYPE_FP4_E2M1, 2,
+                 run_one(DAYAN_TYPE_FP4_E2M1, 2,
                          pack_nibbles({0x3, 0xc}),
                          pack_nibbles({0x4, 0x5})),
                  -3.0f);
     expect_close("INT4 low/high nibble order",
-                 run_one(RVT_TYPE_S4, 2,
+                 run_one(DAYAN_TYPE_S4, 2,
                          pack_nibbles({0xd, 0x4}),
                          pack_nibbles({0x5, 0xe})),
                  -23.0f);
     expect_close("U4 low/high nibble order",
-                 run_one(RVT_TYPE_U4, 2,
+                 run_one(DAYAN_TYPE_U4, 2,
                          pack_nibbles({0x3, 0x4}),
                          pack_nibbles({0x5, 0x2})),
                  23.0f);
@@ -624,15 +624,15 @@ void test_fp4_and_int4() {
 
 void test_paired_4bit_formats() {
     expect_close("paired E2M1 x U4",
-                 run_one(paired_type(RVT_MAT_TYPE_FP4_E2M1,
-                                     RVT_MAT_TYPE_U4),
+                 run_one(paired_type(DAYAN_MAT_TYPE_FP4_E2M1,
+                                     DAYAN_MAT_TYPE_U4),
                          2,
                          pack_nibbles({0x3, 0xc}),
                          pack_nibbles({0x2, 0x3})),
                  -3.0f);
     expect_close("paired S4 x E2M1",
-                 run_one(paired_type(RVT_MAT_TYPE_S4,
-                                     RVT_MAT_TYPE_FP4_E2M1),
+                 run_one(paired_type(DAYAN_MAT_TYPE_S4,
+                                     DAYAN_MAT_TYPE_FP4_E2M1),
                          2,
                          pack_nibbles({0xd, 0x4}),
                          pack_nibbles({0x4, 0x5})),
@@ -654,18 +654,18 @@ void test_mxfp4_scale_layout() {
     copy_to(memory, kBScaleBase, {0x7f, 0x7f});
     copy_to(memory, kBScaleBase + 32, {0x7e, 0x7f});
 
-    RVTNG::mat_tcsr_t control{};
+    DAYAN::mat_tcsr_t control{};
     control.k = k - 1;
     control.m = 1;
     control.n = 1;
     control.aStride = 32;
     control.bStride = 32;
     control.cStride = 32;
-    control.dataType = RVT_TYPE_MX_FP4_E2M1;
+    control.dataType = DAYAN_TYPE_MX_FP4_E2M1;
     control.aScaleStride = 32;
     control.bScaleStride = 32;
 
-    assert(RVTNG::execute_matmul(memory.data(), control,
+    assert(DAYAN::execute_matmul(memory.data(), control,
                                 kABase, kBBase, kCBase,
                                 kAScaleBase, kBScaleBase, false));
     expect_close("MXFP4 row0 col0", load<float>(memory, kCBase), 34.0f);
@@ -685,16 +685,16 @@ void test_layout_mma_and_k_blocking() {
     store(memory, kCBase + 32, 100.0f);
     store(memory, kCBase + 36, 100.0f);
 
-    RVTNG::mat_tcsr_t control{};
+    DAYAN::mat_tcsr_t control{};
     control.k = 1;
     control.m = 1;
     control.n = 1;
     control.aStride = 32;
     control.bStride = 32;
     control.cStride = 32;
-    control.dataType = RVT_TYPE_BF16;
+    control.dataType = DAYAN_TYPE_BF16;
 
-    assert(RVTNG::execute_matmul(memory.data(), control,
+    assert(DAYAN::execute_matmul(memory.data(), control,
                                 kABase, kBBase, kCBase, 0, 0, false));
     const float expected[2][2] = {{17.0f, 23.0f}, {39.0f, 53.0f}};
     for (size_t m = 0; m < 2; ++m) {
@@ -705,7 +705,7 @@ void test_layout_mma_and_k_blocking() {
         }
     }
 
-    assert(RVTNG::execute_matmul(memory.data(), control,
+    assert(DAYAN::execute_matmul(memory.data(), control,
                                 kABase, kBBase, kCBase, 0, 0, true));
     for (size_t m = 0; m < 2; ++m) {
         for (size_t n = 0; n < 2; ++n) {
@@ -717,7 +717,7 @@ void test_layout_mma_and_k_blocking() {
 
     const std::vector<uint8_t> ones(129, 1);
     expect_close("K128 block accumulation",
-                 run_one(RVT_TYPE_S8, 129, ones, ones), 129.0f);
+                 run_one(DAYAN_TYPE_S8, 129, ones, ones), 129.0f);
 }
 
 void test_swizzled_addresses() {
@@ -728,7 +728,7 @@ void test_swizzled_addresses() {
     copy_to_swizzled(memory, kBBase, swizzle, pack_u16({0x40a0, 0x40c0}));
     copy_to_swizzled(memory, kBBase + 32, swizzle, pack_u16({0x40e0, 0x4100}));
 
-    RVTNG::mat_tcsr_t control{};
+    DAYAN::mat_tcsr_t control{};
     control.k = 1;
     control.m = 1;
     control.n = 1;
@@ -738,15 +738,15 @@ void test_swizzled_addresses() {
     control.aSwizzleMBS = swizzle;
     control.bSwizzleMBS = swizzle;
     control.cSwizzleMBS = swizzle;
-    control.dataType = RVT_TYPE_BF16;
+    control.dataType = DAYAN_TYPE_BF16;
 
-    assert(RVTNG::execute_matmul(memory.data(), control,
+    assert(DAYAN::execute_matmul(memory.data(), control,
                                 kABase, kBBase, kCBase, 0, 0, false));
     const float expected[2][2] = {{17.0f, 23.0f}, {39.0f, 53.0f}};
     for (size_t m = 0; m < 2; ++m) {
         for (size_t n = 0; n < 2; ++n) {
             const uint64_t logical = kCBase + m * 32 + n * sizeof(float);
-            const float actual = load<float>(memory, RVTNG::swizzle_addr(logical, swizzle));
+            const float actual = load<float>(memory, DAYAN::swizzle_addr(logical, swizzle));
             expect_close("swizzled matrix address", actual, expected[m][n]);
         }
     }
@@ -754,14 +754,14 @@ void test_swizzled_addresses() {
 
 void test_unsupported_type() {
     std::vector<uint8_t> memory(kUramSize, 0);
-    RVTNG::mat_tcsr_t control{};
+    DAYAN::mat_tcsr_t control{};
     control.aStride = 32;
     control.bStride = 32;
     control.cStride = 32;
     const auto rejected = [&](uint64_t dataType) {
         control.dataType = dataType;
         store(memory, kCBase, 123.0f);
-        assert(!RVTNG::execute_matmul(memory.data(), control,
+        assert(!DAYAN::execute_matmul(memory.data(), control,
                                      kABase, kBBase, kCBase,
                                      kAScaleBase, kBScaleBase, false));
         expect_close("invalid datatype leaves C unchanged",
@@ -769,17 +769,17 @@ void test_unsupported_type() {
     };
 
     rejected(0xff);
-    rejected(RVT_TYPE_FP32);
-    rejected(paired_type(RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_S8));
-    rejected(paired_type(RVT_MAT_TYPE_TF32, RVT_MAT_TYPE_BF16, true, false));
-    rejected(RVT_TYPE_RTL_S8);
-    rejected(uint64_t{0x100} | RVT_TYPE_BF16);
-    rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_E4M3));
-    rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16) | 0x1000);
-    rejected(paired_type(RVT_MAT_TYPE_BF16, RVT_MAT_TYPE_FP16,
+    rejected(DAYAN_TYPE_FP32);
+    rejected(paired_type(DAYAN_MAT_TYPE_TF32, DAYAN_MAT_TYPE_S8));
+    rejected(paired_type(DAYAN_MAT_TYPE_TF32, DAYAN_MAT_TYPE_BF16, true, false));
+    rejected(DAYAN_TYPE_RTL_S8);
+    rejected(uint64_t{0x100} | DAYAN_TYPE_BF16);
+    rejected(paired_type(DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_E4M3));
+    rejected(paired_type(DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_FP16) | 0x1000);
+    rejected(paired_type(DAYAN_MAT_TYPE_BF16, DAYAN_MAT_TYPE_FP16,
                          true, false));
-    rejected(paired_type(0x07u, RVT_MAT_TYPE_E4M3)); // E7M0 is reserved
-    rejected(paired_type(RVT_MAT_TYPE_TF16, RVT_MAT_TYPE_S8));
+    rejected(paired_type(0x07u, DAYAN_MAT_TYPE_E4M3)); // E7M0 is reserved
+    rejected(paired_type(DAYAN_MAT_TYPE_TF16, DAYAN_MAT_TYPE_S8));
 }
 
 } // namespace

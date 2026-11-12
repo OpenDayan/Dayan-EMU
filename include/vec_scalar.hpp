@@ -1,5 +1,5 @@
-#ifndef RVTNG_VEC_SCALAR_HPP
-#define RVTNG_VEC_SCALAR_HPP
+#ifndef DAYAN_VEC_SCALAR_HPP
+#define DAYAN_VEC_SCALAR_HPP
 
 #include "vec.hpp"
 #include <bit>
@@ -7,7 +7,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace RVTNG {
+namespace DAYAN {
 
 enum class vec_scalar_op_t : uint8_t {
     rol,

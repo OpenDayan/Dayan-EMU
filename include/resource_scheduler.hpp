@@ -11,7 +11,7 @@
 #include <mutex>
 #include <vector>
 
-namespace RVTNG {
+namespace DAYAN {
 
 constexpr uint16_t RESOURCE_PRODUCE_BASE = 0x020;
 constexpr uint8_t RESOURCE_NO_OUTPUT = 0xff;
@@ -168,4 +168,4 @@ private:
     std::array<size_t, RESOURCE_TABLE_ENTRIES> shared_tokens_{};
 };
 
-} // namespace RVTNG
+} // namespace DAYAN

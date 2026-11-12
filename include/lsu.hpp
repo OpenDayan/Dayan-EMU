@@ -8,7 +8,7 @@
 #include "interrupt.hpp"
 #include <cstddef>
 
-namespace RVTNG {
+namespace DAYAN {
 
 // TODO: 适配大小端情况
 struct lsu_tcsr_t {
@@ -46,7 +46,7 @@ static_assert(offsetof(lsu_tcsr_t, tableStride) == 20 * sizeof(uint64_t));
 
 class lsu_t: exec_unit_t {
 public:
-    ulong issue(const rvt_pack_t* inst) override;
+    ulong issue(const dayan_pack_t* inst) override;
     lsu_t(exec_unit_t* parrent, uint8_t *uram, uint8_t *dram,
           uint8_t *const *cluster_urams = nullptr,
           size_t cluster_core_count = 0,
@@ -58,7 +58,7 @@ public:
           uint8_t mmu_port = 0);
     ~lsu_t();
     void execute(void);  // 独占循环
-    void enqueue_context(const rvt_pack_t& inst,
+    void enqueue_context(const dayan_pack_t& inst,
                          const tensor_context_snapshot_t& context);
 
 protected:

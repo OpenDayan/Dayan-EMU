@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-namespace RVTNG {
+namespace DAYAN {
 
 static constexpr uint32_t VEC_INST_QUEUE_CAPACITY = 512;
 static constexpr uint32_t VEC_TCSR_COUNT = 69;
@@ -289,21 +289,21 @@ private:
 
 class vec_t: exec_unit_t {
 public:
-    ulong issue(const rvt_pack_t* inst) override;
+    ulong issue(const dayan_pack_t* inst) override;
     vec_t(exec_unit_t* parrent, uint8_t *uram, ulong lane_width,
           tensor_context_t* context = nullptr,
           interrupt_controller_t* interrupts = nullptr);
     ~vec_t();
     void execute(void);
-    void enqueue_context(const rvt_pack_t& inst,
+    void enqueue_context(const dayan_pack_t& inst,
                          const tensor_context_snapshot_t& context);
 
 protected:
     static constexpr uint32_t INST_QUEUE_CAPACITY = VEC_INST_QUEUE_CAPACITY;
 
-    void handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id,
+    void handle_tcsr_write(const dayan_pack_t& inst, uint32_t tcsr_id,
                            const tensor_context_snapshot_t& context);
-    void handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id,
+    void handle_tcsr_read(const dayan_pack_t& inst, uint32_t tcsr_id,
                           const tensor_context_snapshot_t& context);
     void handle_vfork(uint64_t payload,
                       const tensor_context_snapshot_t& context);

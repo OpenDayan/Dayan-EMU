@@ -1,5 +1,5 @@
-#ifndef RVTNG_VEC_CONVERT_HPP
-#define RVTNG_VEC_CONVERT_HPP
+#ifndef DAYAN_VEC_CONVERT_HPP
+#define DAYAN_VEC_CONVERT_HPP
 
 #include <array>
 #include <bit>
@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace RVTNG {
+namespace DAYAN {
 
 enum class vec_rounding_mode_t : uint8_t {
     rne = 0,
@@ -455,6 +455,6 @@ inline std::array<uint32_t, LaneCount> execute_vec_convert(
     return dst;
 }
 
-} // namespace RVTNG
+} // namespace DAYAN
 
 #endif

@@ -14,11 +14,11 @@ extern "C" {
 #include <errno.h>
 #include <sys/time.h>
 
-#ifndef RVT_SOCKET_TYPE
-#define RVT_SOCKET_TYPE SOCK_SEQPACKET
+#ifndef DAYAN_SOCKET_TYPE
+#define DAYAN_SOCKET_TYPE SOCK_SEQPACKET
 #endif
 
-static inline void rvt_socket_tune(int sockfd) {
+static inline void dayan_socket_tune(int sockfd) {
     const int buf_sz = 1 << 20;
 
     setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &buf_sz, sizeof(buf_sz));
@@ -26,15 +26,15 @@ static inline void rvt_socket_tune(int sockfd) {
 }
 
 /* 服务器初始化 - 创建监听Unix socket并接受连接 */
-static inline int rvt_socket_server_init(const char* socket_path) {
+static inline int dayan_socket_server_init(const char* socket_path) {
     int server_fd, client_fd;
     struct sockaddr_un server_addr;
     
     /* 创建socket */
-    if ((server_fd = socket(AF_UNIX, RVT_SOCKET_TYPE, 0)) < 0) {
+    if ((server_fd = socket(AF_UNIX, DAYAN_SOCKET_TYPE, 0)) < 0) {
         return -1;
     }
-    rvt_socket_tune(server_fd);
+    dayan_socket_tune(server_fd);
     
     /* 删除可能已存在的socket文件 */
     unlink(socket_path);
@@ -60,22 +60,22 @@ static inline int rvt_socket_server_init(const char* socket_path) {
         close(server_fd);
         return -1;
     }
-    rvt_socket_tune(client_fd);
+    dayan_socket_tune(client_fd);
     
     close(server_fd);  /* 关闭监听socket，只保留连接socket */
     return client_fd;
 }
 
 /* 客户端初始化 - 连接到Unix socket服务器 */
-static inline int rvt_socket_client_init(const char* socket_path) {
+static inline int dayan_socket_client_init(const char* socket_path) {
     int sockfd;
     struct sockaddr_un server_addr;
     
     /* 创建socket */
-    if ((sockfd = socket(AF_UNIX, RVT_SOCKET_TYPE, 0)) < 0) {
+    if ((sockfd = socket(AF_UNIX, DAYAN_SOCKET_TYPE, 0)) < 0) {
         return -1;
     }
-    rvt_socket_tune(sockfd);
+    dayan_socket_tune(sockfd);
     
     /* 设置服务器地址 */
     memset(&server_addr, 0, sizeof(server_addr));
@@ -92,7 +92,7 @@ static inline int rvt_socket_client_init(const char* socket_path) {
 }
 
 /* 通用的push函数 - 发送uint64_t数据 */
-static inline int rvt_socket_push(int sockfd, uint64_t data) {
+static inline int dayan_socket_push(int sockfd, uint64_t data) {
     ssize_t sent;
 
     do {
@@ -110,7 +110,7 @@ static inline int rvt_socket_push(int sockfd, uint64_t data) {
 }
 
 /* 通用的pop函数 - 接收uint64_t数据 */
-static inline int rvt_socket_pop(int sockfd, uint64_t* data) {
+static inline int dayan_socket_pop(int sockfd, uint64_t* data) {
     uint64_t record;
     struct iovec iov;
     struct msghdr message;
@@ -141,7 +141,7 @@ static inline int rvt_socket_pop(int sockfd, uint64_t* data) {
 }
 
 /* 清理函数 - 删除socket文件 */
-static inline void rvt_cleanup_socket(const char* socket_path) {
+static inline void dayan_cleanup_socket(const char* socket_path) {
     unlink(socket_path);
 }
 

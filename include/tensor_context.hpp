@@ -1,13 +1,13 @@
 #pragma once
 
-#include "rvtng-intf.h"
+#include "dayan-intf.h"
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 
-namespace RVTNG {
+namespace DAYAN {
 
 constexpr uint64_t TENSOR_CONTEXT_ADDRESS = 0x010;
 constexpr uint64_t TENSOR_RESOURCE_CONTEXT_ADDRESS = 0x011;
@@ -237,7 +237,7 @@ private:
 };
 
 struct queued_tensor_inst_t {
-    rvt_pack_t inst{};
+    dayan_pack_t inst{};
     tensor_context_snapshot_t context = tensor_context_snapshot_t::defaults();
     bool context_write = false;
 };
@@ -260,4 +260,4 @@ inline bool is_context_write(uint64_t inst)
     return is_context_access(inst) && ((inst >> 12) & 1) == 0;
 }
 
-} // namespace RVTNG
+} // namespace DAYAN

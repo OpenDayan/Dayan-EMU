@@ -7,7 +7,7 @@
 #include "interrupt.hpp"
 #include <cstddef>
 
-namespace RVTNG {
+namespace DAYAN {
 
 // TODO: 适配大小端情况
 // TCSR 寄存器布局 — 字段顺序对应物理寄存器 index 0-31
@@ -126,12 +126,12 @@ inline bool execute_conv2d(
 
 class mat_t: exec_unit_t {
 public:
-    ulong issue(const rvt_pack_t* inst) override;
+    ulong issue(const dayan_pack_t* inst) override;
     mat_t(exec_unit_t* parrent, uint8_t *uram,
           tensor_context_t* context = nullptr,
           interrupt_controller_t* interrupts = nullptr);
     void execute(void);  // 独占循环
-    void enqueue_context(const rvt_pack_t& inst,
+    void enqueue_context(const dayan_pack_t& inst,
                          const tensor_context_snapshot_t& context);
 
 protected:

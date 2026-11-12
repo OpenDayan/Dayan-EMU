@@ -1,12 +1,12 @@
-#ifndef RVTNG_VEC_UNARY_HPP
-#define RVTNG_VEC_UNARY_HPP
+#ifndef DAYAN_VEC_UNARY_HPP
+#define DAYAN_VEC_UNARY_HPP
 
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
 
-namespace RVTNG {
+namespace DAYAN {
 
 enum class vec_unary_kind_t : uint8_t {
     invalid,

@@ -14,11 +14,11 @@
 
 namespace {
 
-using RVTNG::MMU_PA_MASK;
-using RVTNG::mmu_access_type_t;
-using RVTNG::mmu_fault_code_t;
-using RVTNG::mmu_pte_read_result_t;
-using RVTNG::mmu_t;
+using DAYAN::MMU_PA_MASK;
+using DAYAN::mmu_access_type_t;
+using DAYAN::mmu_fault_code_t;
+using DAYAN::mmu_pte_read_result_t;
+using DAYAN::mmu_t;
 
 constexpr uint64_t kRoot = 0x80000000ull;
 constexpr uint64_t kL1 = 0x80001000ull;
@@ -100,11 +100,11 @@ void test_fixmap() {
     assert(!result.ok());
 
     const uint64_t high_va =
-        ((~RVTNG::MMU_VA_MASK) & MMU_PA_MASK) | (uint64_t{1} << 38);
+        ((~DAYAN::MMU_VA_MASK) & MMU_PA_MASK) | (uint64_t{1} << 38);
     mmu.set_fixmap(false, 0x2000, 0);
     const uint64_t rtl_pa = mmu.translate(
         high_va, mmu_access_type_t::read).pa;
-    assert(rtl_pa == ((0x2000 + (high_va & RVTNG::MMU_VA_MASK)) & MMU_PA_MASK));
+    assert(rtl_pa == ((0x2000 + (high_va & DAYAN::MMU_VA_MASK)) & MMU_PA_MASK));
 }
 
 void test_page_sizes() {
@@ -116,7 +116,7 @@ void test_page_sizes() {
         const auto result = mmu->translate(va + 0x321,
                                           mmu_access_type_t::write);
         assert(result.ok());
-        assert(result.page_size == RVTNG::mmu_page_size_t::page_4k);
+        assert(result.page_size == DAYAN::mmu_page_size_t::page_4k);
         assert(result.pa == (kLeaf + ((va + 0x321) & 0xfff)));
         assert(result.walk_addresses.size() == 3);
     }
@@ -133,7 +133,7 @@ void test_page_sizes() {
         auto mmu = make_mmu(image);
         const auto result = mmu->translate(va, mmu_access_type_t::read);
         assert(result.ok());
-        assert(result.page_size == RVTNG::mmu_page_size_t::page_2m);
+        assert(result.page_size == DAYAN::mmu_page_size_t::page_2m);
         assert(result.pa == physical + (va & 0x1fffff));
     }
 
@@ -147,7 +147,7 @@ void test_page_sizes() {
         auto mmu = make_mmu(image);
         const auto result = mmu->translate(va, mmu_access_type_t::execute);
         assert(result.ok());
-        assert(result.page_size == RVTNG::mmu_page_size_t::page_1g);
+        assert(result.page_size == DAYAN::mmu_page_size_t::page_1g);
         assert(result.pa == physical + (va & 0x3fffffff));
     }
 }
@@ -158,7 +158,7 @@ void test_faults_and_permissions() {
     install_4k(image, va, kLeaf, kPteV | kPteR);
     auto mmu = make_mmu(image);
 
-    RVTNG::mmu_fault_redirect_config_t redirects;
+    DAYAN::mmu_fault_redirect_config_t redirects;
     redirects.page_fault = 0x10000000;
     redirects.read_perm = 0x20000000;
     redirects.write_perm = 0x30000000;
@@ -326,7 +326,7 @@ void test_below_dram_identity() {
 
     const auto result = mmu->translate(va, mmu_access_type_t::read);
     assert(result.ok());
-    assert(result.page_size == RVTNG::mmu_page_size_t::page_4k);
+    assert(result.page_size == DAYAN::mmu_page_size_t::page_4k);
     assert(result.pa == va);
     assert(image.reads == 0);
 

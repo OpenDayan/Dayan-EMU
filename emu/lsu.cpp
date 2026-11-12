@@ -3,7 +3,7 @@
 #include "lsu.hpp"
 #include "resource_scheduler.hpp"
 #include "swizzle.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -11,7 +11,7 @@
 #include <iterator>
 #include <thread>
 
-namespace RVTNG {
+namespace DAYAN {
     namespace {
         constexpr uint64_t kUramSize = 1536ull * 1024ull;
         constexpr uint64_t kTensorUramBase = 0x00800000ull;
@@ -344,7 +344,7 @@ namespace RVTNG {
         delete[] lsu_buffer;
     }
 
-    void lsu_t::enqueue_context(const rvt_pack_t& inst,
+    void lsu_t::enqueue_context(const dayan_pack_t& inst,
                                 const tensor_context_snapshot_t& context_value) {
         inst_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
     }
@@ -397,11 +397,11 @@ namespace RVTNG {
         return true;
     }
 
-    ulong lsu_t::issue(const rvt_pack_t* inst) {
+    ulong lsu_t::issue(const dayan_pack_t* inst) {
         uint32_t unit = (inst->inst >> 23) & 0x1f;
-        bool is_dma_tcsr = rvt::is_base(inst->inst) &&
-            (unit == RVT_UNIT_LSU || is_unit_scoreboard(inst->inst, RVT_UNIT_LSU));
-        bool is_dma = rvt::is_lsu(inst->inst) | is_dma_tcsr;
+        bool is_dma_tcsr = dayan::is_base(inst->inst) &&
+            (unit == DAYAN_UNIT_LSU || is_unit_scoreboard(inst->inst, DAYAN_UNIT_LSU));
+        bool is_dma = dayan::is_lsu(inst->inst) | is_dma_tcsr;
         if(!is_dma) {
             // ignore
             return 0;
@@ -426,17 +426,17 @@ namespace RVTNG {
             // Decode
             uint32_t unit = (inst.inst >> 23) & 0x1f;
             uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
-            bool is_dma_tcsr_write = rvt_is_base(inst.inst) && unit == RVT_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 0;
-            bool is_dma_tcsr_read  = rvt_is_base(inst.inst) && unit == RVT_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 1;
-            bool is_dma_sb_produce = rvt_is_base(inst.inst) &&
-                unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU &&
+            bool is_dma_tcsr_write = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 0;
+            bool is_dma_tcsr_read  = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_LSU && ((inst.inst >> 12) & 0x1) == 1;
+            bool is_dma_sb_produce = dayan_is_base(inst.inst) &&
+                unit == DAYAN_UNIT_BASE && tcsr_id == DAYAN_UNIT_LSU &&
                 ((inst.inst >> 12) & 0x1) == 0;
-            bool is_dma_sb_bar = rvt_is_base(inst.inst) &&
-                unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_LSU &&
+            bool is_dma_sb_bar = dayan_is_base(inst.inst) &&
+                unit == DAYAN_UNIT_BASE && tcsr_id == DAYAN_UNIT_LSU &&
                 ((inst.inst >> 12) & 0x1) == 1;
-            const bool is_resource_produce = rvt_is_base(inst.inst) &&
-                unit == RVT_UNIT_BASE &&
-                tcsr_id == RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU &&
+            const bool is_resource_produce = dayan_is_base(inst.inst) &&
+                unit == DAYAN_UNIT_BASE &&
+                tcsr_id == RESOURCE_PRODUCE_BASE + DAYAN_UNIT_LSU &&
                 ((inst.inst >> 12) & 0x1) == 0;
             if(is_dma_tcsr_write || is_dma_tcsr_read) {
                 debugf("LSU: tcsr read write %d:\n", tcsr_id);
@@ -450,7 +450,7 @@ namespace RVTNG {
                             static_cast<uint32_t>(inst.inst));
                     }
                     if(is_dma_tcsr_read) {
-                        rvt_commit_t cmt_pack{};
+                        dayan_commit_t cmt_pack{};
                         cmt_pack.timestamp = inst.timestamp;
                         cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                         cmt_pack.data = 0;
@@ -472,7 +472,7 @@ namespace RVTNG {
                     // this->tcsr[tcsr_id / 32].checksum += 1;
                     debugf("* write %lx -> %lx.\n", inst.rd, _tcsr[sub_address]);
                 } else {
-                    rvt_commit_t cmt_pack;
+                    dayan_commit_t cmt_pack;
                     cmt_pack.timestamp = inst.timestamp;
                     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                     cmt_pack.data = _tcsr[sub_address];
@@ -487,7 +487,7 @@ namespace RVTNG {
                 continue;
             }
             if(is_dma_sb_bar) {
-                rvt_commit_t cmt_pack;
+                dayan_commit_t cmt_pack;
                 cmt_pack.timestamp = inst.timestamp;
                 cmt_pack.rd = (inst.inst >> 7) & 0x1f;
                 cmt_pack.data = inst.rd;
@@ -496,7 +496,7 @@ namespace RVTNG {
                 continue;
             }
             if(is_resource_produce) {
-                resource_produce(RVT_UNIT_LSU);
+                resource_produce(DAYAN_UNIT_LSU);
                 continue;
             }
             if(!IS_RVT_LSU_DMA(inst.inst)) {
@@ -509,7 +509,7 @@ namespace RVTNG {
             }
             // DMA 指令执行
             {
-                const uint64_t group = RVT_LSU_DMA_GROUP(inst.inst);
+                const uint64_t group = DAYAN_LSU_DMA_GROUP(inst.inst);
                 lsu_tcsr_t empty_tcsr{};
                 const auto physical_group = active_context.physical_group(
                     tensor_unit_t::lsu, group, std::size(tcsr));
@@ -518,10 +518,10 @@ namespace RVTNG {
                         interrupt_source_t::neodma_tcsr_access_error,
                         static_cast<uint32_t>(inst.inst));
                 }
-                const bool src_is_dram = RVT_LSU_DMA_SRC(inst.inst);
-                const bool dst_is_dram = RVT_LSU_DMA_DST(inst.inst);
-                const bool gather = RVT_LSU_DMA_GATHER(inst.inst);
-                const bool scatter = RVT_LSU_DMA_SCATTER(inst.inst);
+                const bool src_is_dram = DAYAN_LSU_DMA_SRC(inst.inst);
+                const bool dst_is_dram = DAYAN_LSU_DMA_DST(inst.inst);
+                const bool gather = DAYAN_LSU_DMA_GATHER(inst.inst);
+                const bool scatter = DAYAN_LSU_DMA_SCATTER(inst.inst);
                 const uint64_t src = (src_is_dram && !gather)
                     ? inst.rs1 : (inst.rs1 & kUramAddressMask);
                 const uint64_t dst = (dst_is_dram && !scatter)

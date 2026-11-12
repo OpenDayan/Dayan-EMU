@@ -68,7 +68,7 @@ bool check(bool condition, const char* message)
 
 bool run_fp32_lowp_compress(uint8_t op)
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     std::vector<uint8_t> uram(1024 * 1024);
     std::array<uint32_t, 64> input{};
@@ -131,7 +131,7 @@ bool run_fp32_lowp_compress(uint8_t op)
 
 bool run_lowp_decompress_fp32(uint8_t op)
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     std::vector<uint8_t> uram(1024 * 1024);
     std::array<uint32_t, 64> input{};
@@ -186,7 +186,7 @@ bool run_lowp_decompress_fp32(uint8_t op)
 
 bool run_bf16_mxfp8()
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     std::vector<uint8_t> uram(1024 * 1024);
     std::array<uint32_t, 64> input{};
@@ -251,7 +251,7 @@ bool run_bf16_mxfp8()
 
 bool run_vfork_context()
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     constexpr uint64_t blocked_input_addr = 0x1000;
     constexpr uint64_t allowed_output_addr = 0x9000;
@@ -308,7 +308,7 @@ bool run_vfork_context()
 
 bool run_flexvec_32_byte_alignment()
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     constexpr uint64_t uram_window_base = 0x00800000;
     constexpr uint64_t input_offset = 32;

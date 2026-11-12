@@ -8,7 +8,7 @@
 #include <cstring>
 
 
-namespace RVTNG {
+namespace DAYAN {
 
     static inline bool myisnan(float x) {
         return ((*(int*)&x) & 0x7fffffff) > 0x7f800000;
@@ -158,4 +158,4 @@ namespace RVTNG {
             }
         }
     }
-} // namespace RVTNG
+} // namespace DAYAN

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <iostream>
 
-using namespace RVTNG;
+using namespace DAYAN;
 
 namespace {
 

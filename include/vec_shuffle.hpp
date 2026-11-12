@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace RVTNG {
+namespace DAYAN {
 
 inline std::array<uint32_t, 64> execute_vec_shuffle_compress(
     const std::array<uint32_t, 64>& src, uint64_t amount)

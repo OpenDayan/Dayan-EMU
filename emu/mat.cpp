@@ -4,7 +4,7 @@
 #include "resource_scheduler.hpp"
 #include "fputils.hpp"
 #include "swizzle.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,7 @@
 #include <iterator>
 #include <vector>
 
-namespace RVTNG {
+namespace DAYAN {
 namespace {
 
 constexpr uint64_t kMatmulBlockK = 128;
@@ -138,8 +138,8 @@ static float convert_uint4(const uint8_t* uram, uint64_t rowBase,
 
 static std::optional<mat_operand_format_t> decode_operand_format(
     uint8_t operandType) {
-    const uint8_t base = operandType & RVT_MAT_TYPE_BASE_MASK;
-    const bool usesScale = (operandType & RVT_MAT_TYPE_MX_BIT) != 0;
+    const uint8_t base = operandType & DAYAN_MAT_TYPE_BASE_MASK;
+    const bool usesScale = (operandType & DAYAN_MAT_TYPE_MX_BIT) != 0;
     const mat_operation_class_t operationClass = (base & 0x10u) == 0
         ? mat_operation_class_t::bits8
         : ((base & 0x18u) == 0x10u
@@ -150,60 +150,60 @@ static std::optional<mat_operand_format_t> decode_operand_format(
     }
 
     switch(base) {
-    case RVT_MAT_TYPE_E0M7:
+    case DAYAN_MAT_TYPE_E0M7:
         return mat_operand_format_t{
             convert_fp8<0>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E0M7" : "FP8-E0M7"};
-    case RVT_MAT_TYPE_E1M6:
+    case DAYAN_MAT_TYPE_E1M6:
         return mat_operand_format_t{
             convert_fp8<1>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E1M6" : "FP8-E1M6"};
-    case RVT_MAT_TYPE_E2M5:
+    case DAYAN_MAT_TYPE_E2M5:
         return mat_operand_format_t{
             convert_fp8<2>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E2M5" : "FP8-E2M5"};
-    case RVT_MAT_TYPE_E3M4:
+    case DAYAN_MAT_TYPE_E3M4:
         return mat_operand_format_t{
             convert_fp8<3>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E3M4" : "FP8-E3M4"};
-    case RVT_MAT_TYPE_E4M3:
+    case DAYAN_MAT_TYPE_E4M3:
         return mat_operand_format_t{
             convert_fp8<4>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E4M3" : "FP8-E4M3"};
-    case RVT_MAT_TYPE_E5M2:
+    case DAYAN_MAT_TYPE_E5M2:
         return mat_operand_format_t{
             convert_fp8<5>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E5M2" : "FP8-E5M2"};
-    case RVT_MAT_TYPE_E6M1:
+    case DAYAN_MAT_TYPE_E6M1:
         return mat_operand_format_t{
             convert_fp8<6>, operationClass, 8, usesScale,
             usesScale ? "MXFP8-E6M1" : "FP8-E6M1"};
-    case RVT_MAT_TYPE_S8:
+    case DAYAN_MAT_TYPE_S8:
         return mat_operand_format_t{
             convert_sint8, operationClass, 8, usesScale,
             usesScale ? "MXS8" : "S8"};
-    case RVT_MAT_TYPE_U8:
+    case DAYAN_MAT_TYPE_U8:
         return mat_operand_format_t{
             convert_uint8, operationClass, 8, usesScale,
             usesScale ? "MXU8" : "U8"};
-    case RVT_MAT_TYPE_TF32:
+    case DAYAN_MAT_TYPE_TF32:
         return mat_operand_format_t{
             convert_tf32, operationClass, 32, false, "TF32"};
-    case RVT_MAT_TYPE_FP16:
+    case DAYAN_MAT_TYPE_FP16:
         return mat_operand_format_t{
             convert_fp16, operationClass, 16, false, "FP16"};
-    case RVT_MAT_TYPE_BF16:
+    case DAYAN_MAT_TYPE_BF16:
         return mat_operand_format_t{
             convert_bf16, operationClass, 16, false, "BF16"};
-    case RVT_MAT_TYPE_FP4_E2M1:
+    case DAYAN_MAT_TYPE_FP4_E2M1:
         return mat_operand_format_t{
             convert_fp4_e2m1, operationClass, 4, usesScale,
             usesScale ? "MXFP4-E2M1" : "FP4-E2M1"};
-    case RVT_MAT_TYPE_S4:
+    case DAYAN_MAT_TYPE_S4:
         return mat_operand_format_t{
             convert_sint4, operationClass, 4, usesScale,
             usesScale ? "MXS4" : "S4"};
-    case RVT_MAT_TYPE_U4:
+    case DAYAN_MAT_TYPE_U4:
         return mat_operand_format_t{
             convert_uint4, operationClass, 4, usesScale,
             usesScale ? "MXU4" : "U4"};
@@ -215,30 +215,30 @@ static std::optional<mat_operand_format_t> decode_operand_format(
 
 static std::optional<uint8_t> decode_legacy_operand(uint8_t dataType) {
     switch(dataType) {
-    case RVT_TYPE_BF16:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_BF16, false);
-    case RVT_TYPE_FP16:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_FP16, false);
-    case RVT_TYPE_FP8_E4M3:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E4M3, false);
-    case RVT_TYPE_FP8_E5M2:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E5M2, false);
-    case RVT_TYPE_MX_FP8_E4M3:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E4M3, true);
-    case RVT_TYPE_MX_FP8_E5M2:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_E5M2, true);
-    case RVT_TYPE_FP4_E2M1:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_FP4_E2M1, false);
-    case RVT_TYPE_MX_FP4_E2M1:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_FP4_E2M1, true);
-    case RVT_TYPE_S8:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_S8, false);
-    case RVT_TYPE_U8:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_U8, false);
-    case RVT_TYPE_S4:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_S4, false);
-    case RVT_TYPE_U4:
-        return RVT_MAT_OPERAND(RVT_MAT_TYPE_U4, false);
+    case DAYAN_TYPE_BF16:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_BF16, false);
+    case DAYAN_TYPE_FP16:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_FP16, false);
+    case DAYAN_TYPE_FP8_E4M3:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_E4M3, false);
+    case DAYAN_TYPE_FP8_E5M2:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_E5M2, false);
+    case DAYAN_TYPE_MX_FP8_E4M3:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_E4M3, true);
+    case DAYAN_TYPE_MX_FP8_E5M2:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_E5M2, true);
+    case DAYAN_TYPE_FP4_E2M1:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_FP4_E2M1, false);
+    case DAYAN_TYPE_MX_FP4_E2M1:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_FP4_E2M1, true);
+    case DAYAN_TYPE_S8:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_S8, false);
+    case DAYAN_TYPE_U8:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_U8, false);
+    case DAYAN_TYPE_S4:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_S4, false);
+    case DAYAN_TYPE_U4:
+        return DAYAN_MAT_OPERAND(DAYAN_MAT_TYPE_U4, false);
     default:
         return std::nullopt;
     }
@@ -534,7 +534,7 @@ mat_t::mat_t(exec_unit_t* parrent, uint8_t* uram,
     std::memset(this->tcsr, 0, sizeof(this->tcsr));
 }
 
-void mat_t::enqueue_context(const rvt_pack_t& inst,
+void mat_t::enqueue_context(const dayan_pack_t& inst,
                             const tensor_context_snapshot_t& context_value) {
     inst_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
 }
@@ -752,10 +752,10 @@ bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
                         interrupt_source_t::neomat_uram_c_write_align);
 }
 
-ulong mat_t::issue(const rvt_pack_t* inst) {
+ulong mat_t::issue(const dayan_pack_t* inst) {
     const uint32_t unit = (inst->inst >> 23) & 0x1f;
-    const bool isMatTcsr = rvt::is_base(inst->inst) &&
-        (unit == RVT_UNIT_MAT || is_unit_scoreboard(inst->inst, RVT_UNIT_MAT));
+    const bool isMatTcsr = dayan::is_base(inst->inst) &&
+        (unit == DAYAN_UNIT_MAT || is_unit_scoreboard(inst->inst, DAYAN_UNIT_MAT));
     const bool isMat = IS_RVT_TOP_MAT(inst->inst) || isMatTcsr;
     if (!isMat) {
         return 0;
@@ -778,19 +778,19 @@ void mat_t::execute(void) {
 
         const uint32_t unit = (inst.inst >> 23) & 0x1f;
         const uint32_t tcsrId = (inst.inst >> 13) & 0x3ff;
-        const bool isMatTcsrWrite = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT &&
+        const bool isMatTcsrWrite = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 0;
-        const bool isMatTcsrRead = rvt_is_base(inst.inst) && unit == RVT_UNIT_MAT &&
+        const bool isMatTcsrRead = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 1;
-        const bool isMatSbProduce = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
-            tcsrId == RVT_UNIT_MAT &&
+        const bool isMatSbProduce = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_BASE &&
+            tcsrId == DAYAN_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 0;
-        const bool isMatSbBar = rvt_is_base(inst.inst) && unit == RVT_UNIT_BASE &&
-            tcsrId == RVT_UNIT_MAT &&
+        const bool isMatSbBar = dayan_is_base(inst.inst) && unit == DAYAN_UNIT_BASE &&
+            tcsrId == DAYAN_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 1;
-        const bool isResourceProduce = rvt_is_base(inst.inst) &&
-            unit == RVT_UNIT_BASE &&
-            tcsrId == RESOURCE_PRODUCE_BASE + RVT_UNIT_MAT &&
+        const bool isResourceProduce = dayan_is_base(inst.inst) &&
+            unit == DAYAN_UNIT_BASE &&
+            tcsrId == RESOURCE_PRODUCE_BASE + DAYAN_UNIT_MAT &&
             ((inst.inst >> 12) & 0x1) == 0;
 
         if (isMatTcsrWrite || isMatTcsrRead) {
@@ -804,7 +804,7 @@ void mat_t::execute(void) {
                                       static_cast<uint32_t>(inst.inst));
                 }
                 if(isMatTcsrRead) {
-                    rvt_commit_t cmtPack{};
+                    dayan_commit_t cmtPack{};
                     cmtPack.timestamp = inst.timestamp;
                     cmtPack.rd = (inst.inst >> 7) & 0x1f;
                     commit(&cmtPack);
@@ -821,7 +821,7 @@ void mat_t::execute(void) {
                 }
                 debugf("* write %lx -> %lx.\n", inst.rd, rawTcsr[subAddress]);
             } else {
-                rvt_commit_t cmtPack;
+                dayan_commit_t cmtPack;
                 cmtPack.timestamp = inst.timestamp;
                 cmtPack.rd = (inst.inst >> 7) & 0x1f;
                 cmtPack.data = rawTcsr[subAddress];
@@ -837,7 +837,7 @@ void mat_t::execute(void) {
             continue;
         }
         if (isMatSbBar) {
-            rvt_commit_t cmtPack;
+            dayan_commit_t cmtPack;
             cmtPack.timestamp = inst.timestamp;
             cmtPack.rd = (inst.inst >> 7) & 0x1f;
             cmtPack.data = inst.rd;
@@ -846,7 +846,7 @@ void mat_t::execute(void) {
             continue;
         }
         if (isResourceProduce) {
-            resource_produce(RVT_UNIT_MAT);
+            resource_produce(DAYAN_UNIT_MAT);
             continue;
         }
 
@@ -859,7 +859,7 @@ void mat_t::execute(void) {
             continue;
         }
 
-        const uint64_t group = RVT_MAT_GROUP(inst.inst);
+        const uint64_t group = DAYAN_MAT_GROUP(inst.inst);
         const auto physicalGroup = active_context.physical_group(
             tensor_unit_t::mat, group, std::size(tcsr));
         mat_tcsr_t emptyTcsr{};
@@ -917,20 +917,20 @@ void mat_t::execute(void) {
         }
         if (!IS_RVT_MAT_MM_FAMILY(inst.inst)) {
             debugf("MAT: unsupported compute mode 0x%llx.\n",
-                   static_cast<unsigned long long>(RVT_MAT_MODE(inst.inst)));
+                   static_cast<unsigned long long>(DAYAN_MAT_MODE(inst.inst)));
             continue;
         }
         if(!validate_matmul_accesses(selected, a, b, c,
                                     selectedAScale, selectedBScale,
-                                    RVT_MAT_ACC(inst.inst) != 0)) {
+                                    DAYAN_MAT_ACC(inst.inst) != 0)) {
             continue;
         }
         if (!execute_matmul(uram, selected, a, b, c,
                             selectedAScale, selectedBScale,
-                            RVT_MAT_ACC(inst.inst) != 0)) {
+                            DAYAN_MAT_ACC(inst.inst) != 0)) {
             debugf("MAT: unsupported DataType 0x%02lx.\n", selected.dataType);
         }
     }
 }
 
-} // namespace RVTNG
+} // namespace DAYAN

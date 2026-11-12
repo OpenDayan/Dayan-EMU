@@ -1,5 +1,5 @@
 #include "core_context.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -16,16 +16,16 @@
 #include <thread>
 #include <vector>
 
-using namespace RVTNG;
+using namespace DAYAN;
 
 // 使用现有 IPC 入口和真实执行线程，不直接调用资源完成回调。
 class resource_core_test_t {
 public:
     resource_core_test_t()
     {
-        assert(socketpair(AF_UNIX, RVT_SOCKET_TYPE, 0, request_) == 0);
-        assert(socketpair(AF_UNIX, RVT_SOCKET_TYPE, 0, response_) == 0);
-        assert(socketpair(AF_UNIX, RVT_SOCKET_TYPE, 0, message_) == 0);
+        assert(socketpair(AF_UNIX, DAYAN_SOCKET_TYPE, 0, request_) == 0);
+        assert(socketpair(AF_UNIX, DAYAN_SOCKET_TYPE, 0, response_) == 0);
+        assert(socketpair(AF_UNIX, DAYAN_SOCKET_TYPE, 0, message_) == 0);
         for(auto& memory : uram_) memory.resize(1536 * 1024);
         dram_.resize(128 * 1024);
         memories_ = {uram_[0].data(), uram_[1].data()};
@@ -106,28 +106,28 @@ public:
         for(int core = 0; core < 2; ++core) {
             cores_[core]->mmu->set_fixmap(true, 0, 0);
             cores_[core]->mmu->set_ptw_base(root);
-            write(core, 12, 6, RVT_UNIT_LSU);
-            write(core, 14, 63, RVT_UNIT_LSU);
-            write(core, 18, 63, RVT_UNIT_LSU);
+            write(core, 12, 6, DAYAN_UNIT_LSU);
+            write(core, 14, 63, DAYAN_UNIT_LSU);
+            write(core, 18, 63, DAYAN_UNIT_LSU);
         }
 
         wait(0, shared, 0, 0x500);
         pop(0, 0x500);
         wait(1, 0, shared, 0x501);
         assert(read(1, 0) == 0);
-        dispatch(0, RVT_LSU_DMA_PATTERN | (RVT_LSU_DMA_DIR_D2U << 12),
+        dispatch(0, DAYAN_LSU_DMA_PATTERN | (DAYAN_LSU_DMA_DIR_D2U << 12),
                  0x1000, source_va);
-        write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU, 0x121);
+        write(0, RESOURCE_PRODUCE_BASE + DAYAN_UNIT_LSU, 0x121);
         pop(1, 0x501);
         assert(std::equal(expected.begin(), expected.end(), uram_[0].data() + 0x1000));
 
         // Core 1 consumes core 0's URAM through the untranslated low window.
         wait(0, shared, 0, 0x502);
         assert(read(0, 0) == 0);
-        dispatch(1, RVT_LSU_DMA_PATTERN | (RVT_LSU_DMA_DIR_D2D << 12),
+        dispatch(1, DAYAN_LSU_DMA_PATTERN | (DAYAN_LSU_DMA_DIR_D2D << 12),
                  destination_va, 0x00801000);
         write(1, RESOURCE_CONSUME_READY, shared);
-        write(1, RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU, RESOURCE_NO_OUTPUT);
+        write(1, RESOURCE_PRODUCE_BASE + DAYAN_UNIT_LSU, RESOURCE_NO_OUTPUT);
         pop(0, 0x502);
         assert(std::equal(expected.begin(), expected.begin() + 32, dram_.data() + 0xafe0));
         assert(std::equal(expected.begin() + 32, expected.end(), dram_.data() + 0x12000));
@@ -141,7 +141,7 @@ public:
         constexpr uint64_t mask = uint64_t{1} << index;
         wait(0, mask, 0, 0x600);
         pop(0, 0x600);
-        write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_MAT, 0x100 | index);
+        write(0, RESOURCE_PRODUCE_BASE + DAYAN_UNIT_MAT, 0x100 | index);
         for(unsigned generation = 0; generation < 4; ++generation) {
             const uint64_t phase = generation & 1 ? mask : 0;
             write(0, RESOURCE_WAIT_PHASE, phase);
@@ -152,16 +152,16 @@ public:
             assert(read(0, RESOURCE_WAIT_PHASE) == 0);
             assert(read(0, 0) == 0);
             write(0, RESOURCE_CONSUME_READY, mask);
-            write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU, RESOURCE_NO_OUTPUT);
+            write(0, RESOURCE_PRODUCE_BASE + DAYAN_UNIT_LSU, RESOURCE_NO_OUTPUT);
             wait(0, mask, 0, 0x630 + generation);
             pop(0, 0x630 + generation);
             assert(read(0, 0) == 0);
-            write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_MAT, 0x100 | index);
+            write(0, RESOURCE_PRODUCE_BASE + DAYAN_UNIT_MAT, 0x100 | index);
             pop(0, 0x620 + generation);
         }
         write(0, RESOURCE_CONSUME_READY, mask);
-        write(0, RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU, RESOURCE_NO_OUTPUT);
-        write(0, RVT_UNIT_LSU, 0x640);
+        write(0, RESOURCE_PRODUCE_BASE + DAYAN_UNIT_LSU, RESOURCE_NO_OUTPUT);
+        write(0, DAYAN_UNIT_LSU, 0x640);
         pop(0, 0x640);
         write(0, LOCAL_RESOURCE_INIT, mask);
     }
@@ -172,7 +172,7 @@ private:
         pollfd ready{fd, POLLIN, 0};
         assert(poll(&ready, 1, 2000) == 1);
         uint64_t value;
-        assert(rvt_socket_pop(fd, &value) == 0);
+        assert(dayan_socket_pop(fd, &value) == 0);
         return value;
     }
 
@@ -186,7 +186,7 @@ private:
     void dispatch(int core, uint64_t inst, uint64_t rd, uint64_t rs1 = 0)
     {
         const std::array<uint64_t, 6> words = {1, inst, rd, rs1, 0, ++timestamp_};
-        for(auto word : words) assert(rvt_socket_push(response_[0], word) == 0);
+        for(auto word : words) assert(dayan_socket_push(response_[0], word) == 0);
         cores_[core]->fetch_one(request_[1], response_[1], fetch_mutex_);
         assert(receive(request_[0]) == static_cast<uint64_t>(core));
     }

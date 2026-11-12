@@ -42,7 +42,7 @@ bool check(bool condition, const char* message)
 
 bool run_case(bool dynamic, uint64_t amount)
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     std::vector<uint8_t> uram(1024 * 1024);
     std::array<uint32_t, 64> input;

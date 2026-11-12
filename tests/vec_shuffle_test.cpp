@@ -32,7 +32,7 @@ int main()
     }
 
     for(uint64_t ctrl = 0; ctrl <= 4; ++ctrl) {
-        const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
+        const auto dst = DAYAN::execute_vec_shuffle_compress(src, ctrl);
         const size_t group_size = size_t{1} << (ctrl + 1);
         const size_t packed_lane_count = dst.size() / group_size;
         for(size_t lane = 0; lane < dst.size(); lane++) {
@@ -43,14 +43,14 @@ int main()
             }
         }
 
-        const auto high_bits_dst = RVTNG::execute_vec_shuffle_compress(
+        const auto high_bits_dst = DAYAN::execute_vec_shuffle_compress(
             src, ctrl | 0x40);
         if(!check(high_bits_dst == dst, "compress ignores parameter bits above bit 5")) {
             return 1;
         }
 
         const uint64_t decompress_ctrl = ctrl | 0x20;
-        const auto decompressed = RVTNG::execute_vec_shuffle_compress(
+        const auto decompressed = DAYAN::execute_vec_shuffle_compress(
             src, decompress_ctrl);
         for(size_t lane = 0; lane < decompressed.size(); lane++) {
             if(!check(decompressed[lane] == src[lane / group_size],
@@ -58,14 +58,14 @@ int main()
                 return 1;
             }
         }
-        const auto decompress_high_bits = RVTNG::execute_vec_shuffle_compress(
+        const auto decompress_high_bits = DAYAN::execute_vec_shuffle_compress(
             src, decompress_ctrl | 0x40);
         if(!check(decompress_high_bits == decompressed,
                   "decompress ignores parameter bits above bit 5")) {
             return 1;
         }
 
-        const auto decompress_then_compress = RVTNG::execute_vec_shuffle_compress(
+        const auto decompress_then_compress = DAYAN::execute_vec_shuffle_compress(
             decompressed, ctrl);
         for(size_t lane = 0; lane < decompress_then_compress.size(); lane++) {
             if(!check(decompress_then_compress[lane]
@@ -75,7 +75,7 @@ int main()
             }
         }
 
-        const auto compress_then_decompress = RVTNG::execute_vec_shuffle_compress(
+        const auto compress_then_decompress = DAYAN::execute_vec_shuffle_compress(
             dst, decompress_ctrl);
         for(size_t lane = 0; lane < compress_then_decompress.size(); lane++) {
             if(!check(compress_then_decompress[lane]
@@ -87,7 +87,7 @@ int main()
     }
 
     for(uint64_t ctrl = 0x10; ctrl <= 0x13; ++ctrl) {
-        const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
+        const auto dst = DAYAN::execute_vec_shuffle_compress(src, ctrl);
         const size_t block_size = size_t{1} << (ctrl - 0x0f);
         for(size_t lane = 0; lane < dst.size(); ++lane) {
             const size_t block = lane / (2 * block_size);
@@ -98,7 +98,7 @@ int main()
             }
         }
 
-        const auto high_bits_dst = RVTNG::execute_vec_shuffle_compress(
+        const auto high_bits_dst = DAYAN::execute_vec_shuffle_compress(
             src, ctrl | 0x40);
         if(!check(high_bits_dst == dst,
                   "block scatter ignores parameter bits above bit 5")) {
@@ -106,7 +106,7 @@ int main()
         }
     }
 
-    const auto block4 = RVTNG::execute_vec_shuffle_compress(src, 0x11);
+    const auto block4 = DAYAN::execute_vec_shuffle_compress(src, 0x11);
     for(size_t lane = 0; lane < 4; ++lane) {
         if(!check(block4[lane] == src[lane],
                   "block-4 first packed block front copy")
@@ -119,7 +119,7 @@ int main()
     }
 
     for(uint64_t ctrl = 0x25; ctrl <= 0x27; ++ctrl) {
-        const auto dst = RVTNG::execute_vec_shuffle_compress(src, ctrl);
+        const auto dst = DAYAN::execute_vec_shuffle_compress(src, ctrl);
         const size_t numerator = ctrl - 0x20;
         for(size_t lane = 0; lane < dst.size(); ++lane) {
             if(!check(dst[lane] == src[(numerator * lane) / 8],
@@ -130,7 +130,7 @@ int main()
     }
 
     const std::array<uint32_t, 64> zeros{};
-    if(!check(RVTNG::execute_vec_shuffle_compress(src, 0x05) == zeros,
+    if(!check(DAYAN::execute_vec_shuffle_compress(src, 0x05) == zeros,
               "reserved compress control has deterministic undefined result")) {
         return 1;
     }

@@ -4,14 +4,14 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
-#include "rvtng-intf.h"
+#include "dayan-intf.h"
 
-namespace RVTNG {
+namespace DAYAN {
 
-using commit_call_back_f = std::function<void(const rvt_commit_t*)>;
+using commit_call_back_f = std::function<void(const dayan_commit_t*)>;
 using scoreboard_call_back_f = std::function<void(const uint64_t)>;
 using resource_produce_call_back_f = std::function<void(uint8_t)>;
-using issue_call_back_f = std::function<ulong(const rvt_pack_t*)>;
+using issue_call_back_f = std::function<ulong(const dayan_pack_t*)>;
 
 class exec_unit_t {
 private:
@@ -30,7 +30,7 @@ public:
             cb(unit);
         }
     }
-    void commit(const rvt_commit_t* inst) {
+    void commit(const dayan_commit_t* inst) {
         for (const auto& cb : commit_cb) {
             cb(inst);
         }
@@ -38,7 +38,7 @@ public:
     // 初始化资源
     exec_unit_t() {};
     // 阻塞式的发射一条指令，返回值，发射了这条指令的单元数量
-    virtual ulong issue(const rvt_pack_t* inst) {
+    virtual ulong issue(const dayan_pack_t* inst) {
         ulong ret = 0;
         for (const auto& cb : issue_cb) {
             ret += cb(inst);
@@ -47,7 +47,7 @@ public:
     }
     // 阻塞式指令提交回调注册
     template<typename T>
-    void register_commit_callback(T* obj, void (T::*method)(const rvt_commit_t*)) {
+    void register_commit_callback(T* obj, void (T::*method)(const dayan_commit_t*)) {
         commit_cb.emplace_back(std::bind(method, obj, std::placeholders::_1));
     }
     void register_commit_callback(commit_call_back_f method) {
@@ -73,7 +73,7 @@ public:
     }
     // 指令发射回调注册
     template<typename T>
-    void register_issue_callback(T* obj, ulong (T::*method)(const rvt_pack_t*)) {
+    void register_issue_callback(T* obj, ulong (T::*method)(const dayan_pack_t*)) {
         issue_cb.emplace_back(std::bind(method, obj, std::placeholders::_1));
     }
     void register_issue_callback(issue_call_back_f method) {

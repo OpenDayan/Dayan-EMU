@@ -1,5 +1,5 @@
 #include "utils.hpp"
-#include "rvtng-intf.h"
+#include "dayan-intf.h"
 #include "core_context.hpp"
 #include <atomic>
 #include <thread>
@@ -10,8 +10,8 @@
 
 static constexpr size_t kUramBytesPerCore = 1536 * 1024;
 
-#ifndef RVTNG_DEFAULT_QEMU
-#define RVTNG_DEFAULT_QEMU "deps/npu-qemu/build/dl-riscv64"
+#ifndef DAYAN_DEFAULT_QEMU
+#define DAYAN_DEFAULT_QEMU "deps/npu-qemu/build/dl-riscv64"
 #endif
 
 /*
@@ -19,7 +19,7 @@ static constexpr size_t kUramBytesPerCore = 1536 * 1024;
  * authoritative for the scalar ClusterMMU and pushes every accepted
  * translation-semantic APB write as {0x20, addr, value} and every
  * flush trigger as {0x21, mode | asid << 8} on the dedicated
- * RVT_MMU_SOCKET_PATH socket (8-byte word records).  This loop owns the
+ * DAYAN_MMU_SOCKET_PATH socket (8-byte word records).  This loop owns the
  * listening end and applies each event to all cores' mmu_t so the
  * tensor ports translate against the same config image.  Status
  * registers are never mirrored: FLUSH_DONE/ACK stay QEMU-authoritative.
@@ -36,13 +36,13 @@ static constexpr size_t kUramBytesPerCore = 1536 * 1024;
 static std::atomic<bool> mmu_config_synced{true};
 
 static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* cores,
-                                  RVTNG::resource_cluster_t* resources) {
+                                  DAYAN::resource_cluster_t* resources) {
     for(;;) {
-        int fd = rvt_socket_server_init(RVT_MMU_SOCKET_PATH);
+        int fd = dayan_socket_server_init(DAYAN_MMU_SOCKET_PATH);
         if(fd < 0) {
             fprintf(stderr, "MMU config-sync: cannot listen on %s (%s); "
                             "QEMU register mirroring disabled\n",
-                    RVT_MMU_SOCKET_PATH, strerror(errno));
+                    DAYAN_MMU_SOCKET_PATH, strerror(errno));
             return;
         }
         printf("MMU config-sync: QEMU front end connected\n");
@@ -52,15 +52,15 @@ static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* c
         mmu_config_synced.store(false, std::memory_order_release);
         while(!peer_lost) {
             uint64_t opcode;
-            if(rvt_socket_pop(fd, &opcode) != 0) {
+            if(dayan_socket_pop(fd, &opcode) != 0) {
                 peer_lost = true;
                 break;
             }
             switch(opcode) {
             case 0x20: { // {addr, value} translation-semantic register write
                 uint64_t addr, value;
-                if(rvt_socket_pop(fd, &addr) != 0 ||
-                   rvt_socket_pop(fd, &value) != 0) {
+                if(dayan_socket_pop(fd, &addr) != 0 ||
+                   dayan_socket_pop(fd, &value) != 0) {
                     peer_lost = true;
                     break;
                 }
@@ -71,7 +71,7 @@ static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* c
             }
             case 0x21: { // {mode | asid << 8} TLB flush trigger
                 uint64_t payload;
-                if(rvt_socket_pop(fd, &payload) != 0) {
+                if(dayan_socket_pop(fd, &payload) != 0) {
                     peer_lost = true;
                     break;
                 }
@@ -89,13 +89,13 @@ static void mmu_config_sync_loop(std::vector<std::unique_ptr<core_context_t>>* c
             }
             case 0x22: { // Shared Resource clear mask; acknowledge before Host launch.
                 uint64_t mask;
-                if(rvt_socket_pop(fd, &mask) != 0) {
+                if(dayan_socket_pop(fd, &mask) != 0) {
                     peer_lost = true;
                     break;
                 }
                 const bool accepted = !(mask >> 32) &&
                     resources->clear(static_cast<uint32_t>(mask));
-                if(rvt_socket_push(fd, accepted ? 0 : 1) != 0) {
+                if(dayan_socket_push(fd, accepted ? 0 : 1) != 0) {
                     peer_lost = true;
                 }
                 break;
@@ -196,9 +196,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("RVTNG Emulator: Using %d cores\n", num_cores);
+    printf("DAYAN Emulator: Using %d cores\n", num_cores);
 
-    size_t dram_size = RVTNG::MMU_DEFAULT_DRAM_SIZE;
+    size_t dram_size = DAYAN::MMU_DEFAULT_DRAM_SIZE;
     if (const char *memory_mib = getenv("DAYAN_EMU_MEMORY_MIB")) {
         char *end = nullptr;
         errno = 0;
@@ -256,9 +256,9 @@ int main(int argc, char** argv) {
         }
         if(qemu_arg_start >= argc) {// Default debug mode (no QEMU arguments provided)
             // Default mode: automatically add -smp parameter
-            execlp(RVTNG_DEFAULT_QEMU, "QEMU_THREAD", "-monitor", "null",
+            execlp(DAYAN_DEFAULT_QEMU, "QEMU_THREAD", "-monitor", "null",
             "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
-            "-machine", "rvtng-v0", "-nographic", "-m", "4096",
+            "-machine", "dayan-v0", "-nographic", "-m", "4096",
             "-smp", smp_arg.c_str(), "-S", "-s", NULL);
             perror("failed to exec default QEMU backend");
             _exit(EXIT_FAILURE);
@@ -292,7 +292,7 @@ int main(int argc, char** argv) {
     debugf("Main: QEMU Ready!\n");
     
     // Create all cores
-    RVTNG::resource_cluster_t resource_cluster;
+    DAYAN::resource_cluster_t resource_cluster;
     std::vector<std::unique_ptr<core_context_t>> cores;
     for(int i = 0; i < num_cores; i++) {
         try {

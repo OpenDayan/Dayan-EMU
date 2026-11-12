@@ -1,11 +1,11 @@
 #include "resource_scheduler.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <limits>
 
-namespace RVTNG {
+namespace DAYAN {
 
 void resource_cluster_t::add(resource_scheduler_t* scheduler)
 {
@@ -126,8 +126,8 @@ uint64_t resource_scheduler_t::read(uint16_t address)
 {
     std::lock_guard<std::mutex> lock(cluster_.mutex_);
     if(address >= RESOURCE_PRODUCE_BASE && address < RESOURCE_PRODUCE_BASE + 16 &&
-       (address < RESOURCE_PRODUCE_BASE + RVT_UNIT_LSU ||
-        address > RESOURCE_PRODUCE_BASE + RVT_UNIT_MACRO)) {
+       (address < RESOURCE_PRODUCE_BASE + DAYAN_UNIT_LSU ||
+        address > RESOURCE_PRODUCE_BASE + DAYAN_UNIT_MACRO)) {
         raise_locked(address);
     }
     switch(address) {
@@ -206,7 +206,7 @@ bool resource_scheduler_t::register_produce_locked(
     const uint8_t output = static_cast<uint8_t>(value);
     produce.consumers = static_cast<uint8_t>(value >> 8);
     produce.has_output = output != RESOURCE_NO_OUTPUT;
-    if(unit < RVT_UNIT_LSU || unit > RVT_UNIT_MACRO || (value >> 16) != 0 ||
+    if(unit < DAYAN_UNIT_LSU || unit > DAYAN_UNIT_MACRO || (value >> 16) != 0 ||
        !map_mask_locked(consume_ready_, context, produce.consume_ready) ||
        (!produce.has_output &&
         (produce.consumers != 0 || consume_ready_ == 0)) ||
@@ -509,4 +509,4 @@ void resource_scheduler_t::output_popped(const scoreboard_entry_t& entry)
     cluster_.schedule_all_locked();
 }
 
-} // namespace RVTNG
+} // namespace DAYAN

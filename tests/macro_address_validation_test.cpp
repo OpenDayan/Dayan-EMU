@@ -3,7 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 
-using namespace RVTNG;
+using namespace DAYAN;
 
 namespace {
 
@@ -13,10 +13,10 @@ public:
     using rvt64_t::validate_instruction;
 };
 
-rvt_pack_t macro(unsigned extension, unsigned src_type = 0,
+dayan_pack_t macro(unsigned extension, unsigned src_type = 0,
                  unsigned operation = 0, unsigned mode = 0)
 {
-    rvt_pack_t inst{};
+    dayan_pack_t inst{};
     inst.inst = 0x3f | (uint64_t{extension} << 25)
         | (uint64_t{src_type} << 32) | (uint64_t{operation} << 40)
         | (uint64_t{mode} << 46);
@@ -26,7 +26,7 @@ rvt_pack_t macro(unsigned extension, unsigned src_type = 0,
     return inst;
 }
 
-void accept(const char* name, const rvt_pack_t& inst, const rvt64_tcsr_t& control,
+void accept(const char* name, const dayan_pack_t& inst, const rvt64_tcsr_t& control,
             bool valid = true,
             interrupt_source_t source = interrupt_source_t::neovec_uram_store_align)
 {

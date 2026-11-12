@@ -1,10 +1,10 @@
-#ifndef RVTNG_VEC_MUL24_HPP
-#define RVTNG_VEC_MUL24_HPP
+#ifndef DAYAN_VEC_MUL24_HPP
+#define DAYAN_VEC_MUL24_HPP
 
 #include <cstdint>
 #include <stdexcept>
 
-namespace RVTNG {
+namespace DAYAN {
 
 constexpr uint32_t execute_vec_uint24_mul_lane(uint32_t lhs, uint32_t rhs)
 {
@@ -44,6 +44,6 @@ inline uint32_t execute_vec_mul24_lane(uint8_t func8, uint32_t lhs,
     }
 }
 
-} // namespace RVTNG
+} // namespace DAYAN
 
 #endif

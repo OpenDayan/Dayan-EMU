@@ -1,5 +1,5 @@
 #include "lsu.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 #include "swizzle.hpp"
 
 #ifdef NDEBUG
@@ -24,20 +24,20 @@ constexpr uint64_t kTensorUramStride = 2ull * 1024ull * 1024ull;
 constexpr size_t kDramSize = 128 * 1024;
 constexpr size_t kRowBytes = 64;
 
-class test_lsu_t : public RVTNG::lsu_t {
+class test_lsu_t : public DAYAN::lsu_t {
 public:
-    using RVTNG::lsu_t::check_uram_access;
-    using RVTNG::lsu_t::execute_dma;
-    using RVTNG::lsu_t::execute_dma_once;
-    using RVTNG::lsu_t::lsu_t;
+    using DAYAN::lsu_t::check_uram_access;
+    using DAYAN::lsu_t::execute_dma;
+    using DAYAN::lsu_t::execute_dma_once;
+    using DAYAN::lsu_t::lsu_t;
 
-    void set_active_context(const RVTNG::tensor_context_snapshot_t& value) {
+    void set_active_context(const DAYAN::tensor_context_snapshot_t& value) {
         active_context = value;
     }
 };
 
-RVTNG::lsu_tcsr_t make_control() {
-    RVTNG::lsu_tcsr_t control{};
+DAYAN::lsu_tcsr_t make_control() {
+    DAYAN::lsu_tcsr_t control{};
     control.inBlockStride = kRowBytes;
     control.inDim0Stride = kRowBytes;
     control.outBlockStride = kRowBytes;
@@ -79,10 +79,10 @@ void test_swizzle_address_bits() {
         (uint64_t{5} << 16) | (uint64_t{3} << 8) | 5;
     constexpr uint64_t high_bits = 0x00808000;
 
-    assert(RVTNG::swizzle_addr_raw(0x1234, swizzle) == 0x12b4);
-    assert(RVTNG::swizzle_addr_raw(high_bits | 0x1234, swizzle) ==
+    assert(DAYAN::swizzle_addr_raw(0x1234, swizzle) == 0x12b4);
+    assert(DAYAN::swizzle_addr_raw(high_bits | 0x1234, swizzle) ==
            (high_bits | 0x12b4));
-    assert(RVTNG::swizzle_addr_raw(
+    assert(DAYAN::swizzle_addr_raw(
                0x1234, pack_swizzle(0x15, 0x13, 0x15)) == 0x12b4);
 }
 
@@ -92,8 +92,8 @@ void test_decoder() {
     assert(IS_RVT_LSU_DMA(base | (1u << 23)));
     assert(IS_RVT_LSU_DMA(base | (1u << 14)));
     assert(IS_RVT_LSU_DMA(base | (1u << 23) | (1u << 14)));
-    assert(RVT_LSU_DMA_GATHER(base | (1u << 23)) == 1);
-    assert(RVT_LSU_DMA_SCATTER(base | (1u << 14)) == 1);
+    assert(DAYAN_LSU_DMA_GATHER(base | (1u << 23)) == 1);
+    assert(DAYAN_LSU_DMA_SCATTER(base | (1u << 14)) == 1);
     assert(!IS_RVT_LSU_DMA(base | (1u << 24)));
 }
 
@@ -220,9 +220,9 @@ void test_gather_scatter_all_directions(test_lsu_t& lsu,
 
 void test_unaligned_uram_swizzle(std::vector<uint8_t>& uram,
                                  std::vector<uint8_t>& dram) {
-    RVTNG::exec_unit_t parent;
-    RVTNG::tensor_context_t context;
-    RVTNG::interrupt_controller_t interrupts;
+    DAYAN::exec_unit_t parent;
+    DAYAN::tensor_context_t context;
+    DAYAN::interrupt_controller_t interrupts;
     test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0,
                    &context, &interrupts);
     auto store_control = make_control();
@@ -237,9 +237,9 @@ void test_unaligned_uram_swizzle(std::vector<uint8_t>& uram,
     std::fill(uram.begin() + 0x40, uram.begin() + 0x80, 0xa5);
 
     assert(lsu.execute_dma_once(&store_control, dram_src, uram_addr, true, false));
-    const uint64_t first_port = RVTNG::swizzle_addr(0x40,
+    const uint64_t first_port = DAYAN::swizzle_addr(0x40,
         store_control.uramWriteSwizzleMBS);
-    const uint64_t second_port = RVTNG::swizzle_addr(0x60,
+    const uint64_t second_port = DAYAN::swizzle_addr(0x60,
         store_control.uramWriteSwizzleMBS);
     assert(first_port == 0x60);
     assert(second_port == 0x40);
@@ -316,7 +316,7 @@ void test_tensor_uram_windows(std::vector<uint8_t>& dram) {
     std::array<uint8_t*, 4> windows = {
         uram[0].data(), uram[1].data(), uram[2].data(), uram[3].data(),
     };
-    RVTNG::exec_unit_t parent;
+    DAYAN::exec_unit_t parent;
     test_lsu_t lsu(&parent, uram[0].data(), dram.data(), windows.data(),
                    windows.size());
     auto control = make_control();
@@ -384,8 +384,8 @@ void test_mmu_dram_translation(std::vector<uint8_t>& uram,
     std::fill(dram.data() + destination_pa - kDramBase,
               dram.data() + destination_pa - kDramBase + kRowBytes, 0xa5);
 
-    RVTNG::exec_unit_t parent;
-    RVTNG::mmu_t mmu(dram.data(), dram.size());
+    DAYAN::exec_unit_t parent;
+    DAYAN::mmu_t mmu(dram.data(), dram.size());
     mmu.set_fixmap(true, 0, 0);
     mmu.set_ptw_base(root);
     test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0, nullptr,
@@ -469,8 +469,8 @@ void test_mmu_page_crossing_translation(std::vector<uint8_t>& uram,
               dram.data() + destination_next_pa - kDramBase + cross_bytes,
               0xa5);
 
-    RVTNG::exec_unit_t parent;
-    RVTNG::mmu_t mmu(dram.data(), dram.size());
+    DAYAN::exec_unit_t parent;
+    DAYAN::mmu_t mmu(dram.data(), dram.size());
     mmu.set_fixmap(true, 0, 0);
     mmu.set_ptw_base(root);
     test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0, nullptr,
@@ -550,8 +550,8 @@ void test_mmu_translation_before_tensor_window(
     std::fill(dram.data() + destination_pa - kDramBase,
               dram.data() + destination_pa - kDramBase + kRowBytes, 0xa5);
 
-    RVTNG::exec_unit_t parent;
-    RVTNG::mmu_t mmu(dram.data(), dram.size());
+    DAYAN::exec_unit_t parent;
+    DAYAN::mmu_t mmu(dram.data(), dram.size());
     mmu.set_fixmap(true, 0, 0);
     mmu.set_ptw_base(root);
     test_lsu_t lsu(&parent, uram[0].data(), dram.data(), windows.data(),
@@ -569,49 +569,49 @@ void test_mmu_translation_before_tensor_window(
 
 void test_context_uram_interrupts(std::vector<uint8_t>& uram,
                                   std::vector<uint8_t>& dram) {
-    RVTNG::exec_unit_t parent;
-    RVTNG::tensor_context_t context;
-    RVTNG::interrupt_controller_t interrupts;
+    DAYAN::exec_unit_t parent;
+    DAYAN::tensor_context_t context;
+    DAYAN::interrupt_controller_t interrupts;
     test_lsu_t lsu(&parent, uram.data(), dram.data(), nullptr, 0,
                    &context, &interrupts);
     auto snapshot = context.snapshot();
-    snapshot.uram_range = RVTNG::uram_range_t{4, 5};
+    snapshot.uram_range = DAYAN::uram_range_t{4, 5};
     lsu.set_active_context(snapshot);
 
-    constexpr uint64_t begin = 4 * RVTNG::URAM_CONTEXT_GRANULE;
-    constexpr uint64_t end = 5 * RVTNG::URAM_CONTEXT_GRANULE;
+    constexpr uint64_t begin = 4 * DAYAN::URAM_CONTEXT_GRANULE;
+    constexpr uint64_t end = 5 * DAYAN::URAM_CONTEXT_GRANULE;
     assert(lsu.check_uram_access(
         begin, 32,
-        RVTNG::interrupt_source_t::neodma_uram_read_range,
-        RVTNG::interrupt_source_t::neodma_uram_read_align));
+        DAYAN::interrupt_source_t::neodma_uram_read_range,
+        DAYAN::interrupt_source_t::neodma_uram_read_align));
     assert(!lsu.check_uram_access(
         begin - 32, 32,
-        RVTNG::interrupt_source_t::neodma_uram_read_range,
-        RVTNG::interrupt_source_t::neodma_uram_read_align));
+        DAYAN::interrupt_source_t::neodma_uram_read_range,
+        DAYAN::interrupt_source_t::neodma_uram_read_align));
     assert(!lsu.check_uram_access(
         begin + 1, 32,
-        RVTNG::interrupt_source_t::neodma_uram_read_range,
-        RVTNG::interrupt_source_t::neodma_uram_read_align));
+        DAYAN::interrupt_source_t::neodma_uram_read_range,
+        DAYAN::interrupt_source_t::neodma_uram_read_align));
     assert(!lsu.check_uram_access(
         end - 32, 64,
-        RVTNG::interrupt_source_t::neodma_uram_read_range,
-        RVTNG::interrupt_source_t::neodma_uram_read_align));
+        DAYAN::interrupt_source_t::neodma_uram_read_range,
+        DAYAN::interrupt_source_t::neodma_uram_read_align));
 
     const uint64_t swizzle = pack_swizzle(8, 1, 5);
     assert(lsu.check_uram_access(
         begin, 32,
-        RVTNG::interrupt_source_t::neodma_uram_read_range,
-        RVTNG::interrupt_source_t::neodma_uram_read_align,
+        DAYAN::interrupt_source_t::neodma_uram_read_range,
+        DAYAN::interrupt_source_t::neodma_uram_read_align,
         32, swizzle));
     assert(!lsu.check_uram_access(
         begin - 32, 32,
-        RVTNG::interrupt_source_t::neodma_uram_read_range,
-        RVTNG::interrupt_source_t::neodma_uram_read_align,
+        DAYAN::interrupt_source_t::neodma_uram_read_range,
+        DAYAN::interrupt_source_t::neodma_uram_read_align,
         32, swizzle));
 
     assert(interrupts.count() == 4);
     assert((interrupts.read(1) >> 32) == static_cast<uint16_t>(
-        RVTNG::interrupt_source_t::neodma_uram_read_range));
+        DAYAN::interrupt_source_t::neodma_uram_read_range));
     assert(static_cast<uint32_t>(interrupts.read(3)) == end);
     assert(static_cast<uint32_t>(interrupts.read(4)) == begin - 9 * 32);
 }
@@ -621,7 +621,7 @@ void test_context_uram_interrupts(std::vector<uint8_t>& uram,
 int main() {
     std::vector<uint8_t> uram(kUramSize);
     std::vector<uint8_t> dram(kDramSize);
-    RVTNG::exec_unit_t parent;
+    DAYAN::exec_unit_t parent;
     test_lsu_t lsu(&parent, uram.data(), dram.data());
 
     test_decoder();

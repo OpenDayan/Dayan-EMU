@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <iostream>
 
-using RVTNG::vec_scalar_op_t;
+using DAYAN::vec_scalar_op_t;
 
 namespace {
 
@@ -54,7 +54,7 @@ bool check(bool condition, const char* message)
 
 int main()
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     const std::array<std::pair<uint32_t, vec_scalar_op_t>, 11> scalar_decodes = {{
         {scalar_raw(1, 0, 2, 0, 3), vec_scalar_op_t::rol},

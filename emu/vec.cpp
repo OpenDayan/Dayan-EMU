@@ -1,5 +1,5 @@
 #include "common.hpp"
-#include "rvt_decoder.hpp"
+#include "dayan_decoder.hpp"
 #include "swizzle.hpp"
 #include "utils.hpp"
 #include "vec.hpp"
@@ -17,7 +17,7 @@
 #include <cstring>
 #include <iterator>
 
-namespace RVTNG {
+namespace DAYAN {
 
 namespace {
 
@@ -83,11 +83,11 @@ static inline vec_fields_t decode_vec_fields(uint32_t raw)
     return f;
 }
 
-static inline bool is_vec_tcsr(const rvt_pack_t& inst)
+static inline bool is_vec_tcsr(const dayan_pack_t& inst)
 {
     uint32_t unit = (inst.inst >> 23) & 0x1f;
-    return rvt::is_base(static_cast<uint32_t>(inst.inst))
-        && (unit == RVT_UNIT_VEC || is_unit_scoreboard(inst.inst, RVT_UNIT_VEC));
+    return dayan::is_base(static_cast<uint32_t>(inst.inst))
+        && (unit == DAYAN_UNIT_VEC || is_unit_scoreboard(inst.inst, DAYAN_UNIT_VEC));
 }
 
 static inline bool is_vec_inst(uint64_t inst)
@@ -1328,7 +1328,7 @@ vec_t::vec_t(exec_unit_t* parrent, uint8_t* uram, ulong lane_width,
     executer.start();
 }
 
-void vec_t::enqueue_context(const rvt_pack_t& inst,
+void vec_t::enqueue_context(const dayan_pack_t& inst,
                             const tensor_context_snapshot_t& context_value)
 {
     issue_queue.enqueue(queued_tensor_inst_t{inst, context_value, true});
@@ -1339,7 +1339,7 @@ vec_t::~vec_t()
     executer.stop();
 }
 
-ulong vec_t::issue(const rvt_pack_t* inst)
+ulong vec_t::issue(const dayan_pack_t* inst)
 {
     if(!is_vec_tcsr(*inst) && !is_vec_inst(inst->inst)) {
         return 0;
@@ -1420,11 +1420,11 @@ void vec_t::drain_scoreboard_fences()
                 return;
             }
             if(fence.kind == vec_scoreboard_fence_kind_t::resource_produce) {
-                resource_produce(RVT_UNIT_VEC);
+                resource_produce(DAYAN_UNIT_VEC);
                 return;
             }
 
-            rvt_commit_t cmt_pack;
+            dayan_commit_t cmt_pack;
             cmt_pack.timestamp = fence.timestamp;
             cmt_pack.rd = fence.rd;
             cmt_pack.data = 0;
@@ -1433,10 +1433,10 @@ void vec_t::drain_scoreboard_fences()
         });
 }
 
-void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id,
+void vec_t::handle_tcsr_read(const dayan_pack_t& inst, uint32_t tcsr_id,
                              const tensor_context_snapshot_t& context_value)
 {
-    rvt_commit_t cmt_pack;
+    dayan_commit_t cmt_pack;
     cmt_pack.timestamp = inst.timestamp;
     cmt_pack.rd = (inst.inst >> 7) & 0x1f;
 
@@ -1455,7 +1455,7 @@ void vec_t::handle_tcsr_read(const rvt_pack_t& inst, uint32_t tcsr_id,
     commit(&cmt_pack);
 }
 
-void vec_t::handle_tcsr_write(const rvt_pack_t& inst, uint32_t tcsr_id,
+void vec_t::handle_tcsr_write(const dayan_pack_t& inst, uint32_t tcsr_id,
                               const tensor_context_snapshot_t& context_value)
 {
     if(tcsr_id >= VEC_TCSR_COUNT) {
@@ -1533,7 +1533,7 @@ void vec_t::execute(void)
             }
         }
         const queued_tensor_inst_t queued = std::move(*pending_inst);
-        const rvt_pack_t& inst = queued.inst;
+        const dayan_pack_t& inst = queued.inst;
         active_context = queued.context;
         MFENCE();
         poll_responses(false);
@@ -1543,18 +1543,18 @@ void vec_t::execute(void)
 
         uint32_t unit = (inst.inst >> 23) & 0x1f;
         uint32_t tcsr_id = (inst.inst >> 13) & 0x3ff;
-        bool is_tcsr_write = rvt::is_base(static_cast<uint32_t>(inst.inst))
-            && unit == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 0;
-        bool is_tcsr_read = rvt::is_base(static_cast<uint32_t>(inst.inst))
-            && unit == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 1;
-        bool is_vec_sb_produce = rvt::is_base(static_cast<uint32_t>(inst.inst))
-            && unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 0;
-        bool is_vec_sb_bar = rvt::is_base(static_cast<uint32_t>(inst.inst))
-            && unit == RVT_UNIT_BASE && tcsr_id == RVT_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 1;
+        bool is_tcsr_write = dayan::is_base(static_cast<uint32_t>(inst.inst))
+            && unit == DAYAN_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 0;
+        bool is_tcsr_read = dayan::is_base(static_cast<uint32_t>(inst.inst))
+            && unit == DAYAN_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 1;
+        bool is_vec_sb_produce = dayan::is_base(static_cast<uint32_t>(inst.inst))
+            && unit == DAYAN_UNIT_BASE && tcsr_id == DAYAN_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 0;
+        bool is_vec_sb_bar = dayan::is_base(static_cast<uint32_t>(inst.inst))
+            && unit == DAYAN_UNIT_BASE && tcsr_id == DAYAN_UNIT_VEC && ((inst.inst >> 12) & 0x1) == 1;
         const bool is_resource_produce =
-            rvt::is_base(static_cast<uint32_t>(inst.inst)) &&
-            unit == RVT_UNIT_BASE &&
-            tcsr_id == RESOURCE_PRODUCE_BASE + RVT_UNIT_VEC &&
+            dayan::is_base(static_cast<uint32_t>(inst.inst)) &&
+            unit == DAYAN_UNIT_BASE &&
+            tcsr_id == RESOURCE_PRODUCE_BASE + DAYAN_UNIT_VEC &&
             ((inst.inst >> 12) & 0x1) == 0;
 
         if(is_tcsr_write) {
@@ -1598,7 +1598,7 @@ void vec_t::execute(void)
             drain_scoreboard_fences();
             continue;
         }
-        if(rvt::is_base(static_cast<uint32_t>(inst.inst))) {
+        if(dayan::is_base(static_cast<uint32_t>(inst.inst))) {
             if(interrupts) {
                 interrupts->raise(interrupt_source_t::flexvec_decode_error,
                                   static_cast<uint32_t>(inst.inst));

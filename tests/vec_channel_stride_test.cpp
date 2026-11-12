@@ -66,10 +66,10 @@ uint32_t read_word(const std::vector<uint8_t>& uram, uint64_t address)
 }
 
 void execute(std::vector<uint8_t>& uram,
-             const std::vector<RVTNG::vec_inst_t>& instructions,
-             const RVTNG::vec_tcsr_t& tcsr)
+             const std::vector<DAYAN::vec_inst_t>& instructions,
+             const DAYAN::vec_tcsr_t& tcsr)
 {
-    using namespace RVTNG;
+    using namespace DAYAN;
 
     std::array<vec_inst_t, VEC_INST_QUEUE_CAPACITY> inst_queue{};
     std::copy(instructions.begin(), instructions.end(), inst_queue.begin());
@@ -95,7 +95,7 @@ void execute(std::vector<uint8_t>& uram,
 
 bool check_tcsr_layout_and_defaults()
 {
-    RVTNG::vec_tcsr_t tcsr{};
+    DAYAN::vec_tcsr_t tcsr{};
     const uint64_t* raw = reinterpret_cast<const uint64_t*>(&tcsr);
     for(size_t selector = 0; selector < 4; ++selector) {
         if(!check(raw[65 + selector] == 32,
@@ -120,7 +120,7 @@ bool check_strided_load()
         }
     }
 
-    RVTNG::vec_tcsr_t tcsr{};
+    DAYAN::vec_tcsr_t tcsr{};
     tcsr.uramChannelStride[2] = stride;
     execute(uram, {
         {regular_load_raw(0, 2), INPUT_ADDR},
@@ -146,7 +146,7 @@ bool check_strided_store()
         write_word(uram, OUTPUT_ADDR + offset, sentinel);
     }
 
-    RVTNG::vec_tcsr_t tcsr{};
+    DAYAN::vec_tcsr_t tcsr{};
     tcsr.uramChannelStride[3] = stride;
     execute(uram, {
         {regular_load_raw(0, 0), INPUT_ADDR},
@@ -176,7 +176,7 @@ bool check_masked_accesses_stay_contiguous()
     }
     std::memcpy(uram.data() + INPUT_ADDR, input.data(), sizeof(input));
 
-    RVTNG::vec_tcsr_t tcsr{};
+    DAYAN::vec_tcsr_t tcsr{};
     tcsr.uramChannelStride[3] = 256;
     execute(uram, {
         {g2s_raw(0), ~uint64_t{0}},
