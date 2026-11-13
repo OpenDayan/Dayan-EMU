@@ -1,7 +1,7 @@
 # Dayan-emu
 
 Dayan-emu 是 Dayan NPU 的功能级模拟器。它与仓库内定制的
-`npu-qemu` 配合运行：QEMU 负责 RISC-V 标量核、固件启动、SoC 外设和 Host
+`QEMU` 配合运行：QEMU 负责 RISC-V 标量核、固件启动、SoC 外设和 Host
 接口，Dayan-emu 负责张量指令的取指、分发与 LSU/MAT/VEC/MACRO 功能执行。
 
 当前版本支持 1～8 个计算 Core、每 Core 独立 URAM、Core 间 URAM 访问、共享
@@ -95,7 +95,7 @@ Runtime 暴露：
 | `include/` | 指令解码、IPC、Tensor Context、中断和执行单元接口 |
 | `utils/` | 通用执行与中断实现 |
 | `tests/` | LSU、MAT、VEC、Context 和中断单元测试 |
-| `deps/npu-qemu/` | 固定版本的定制 QEMU 子模块 |
+| `deps/QEMU/` | 固定版本的定制 QEMU 子模块 |
 
 ## 环境要求
 
@@ -151,7 +151,7 @@ make
 产物为：
 
 - `bin/dayan-emu`
-- `deps/npu-qemu/build/dl-riscv64`
+- `deps/QEMU/build/dl-riscv64`
 
 根目录 `make` 会自动配置并增量构建 QEMU。也可以只构建 QEMU：
 
@@ -167,17 +167,17 @@ make clean
 make BUILD_TYPE=Debug
 
 # 调整 QEMU 并行编译任务数
-make qemu NPU_QEMU_JOBS=32
+make qemu QEMU_JOBS=32
 
 # 使用其他兼容的 QEMU 源码目录或已有可执行文件
 make clean
-make NPU_QEMU_DIR=/path/to/npu-qemu
+make QEMU_DIR=/path/to/QEMU
 
 make clean
-make NPU_QEMU_BIN=/path/to/compatible-qemu
+make QEMU_BIN=/path/to/compatible-qemu
 ```
 
-`NPU_QEMU_BIN` 的绝对路径会在编译 Dayan-emu 时写入默认启动配置。更换该变量后应
+`QEMU_BIN` 的绝对路径会在编译 Dayan-emu 时写入默认启动配置。更换该变量后应
 先执行 `make clean`，再重新构建 `bin/dayan-emu`。QEMU 子构建不会继承 Dayan-emu 的 sanitizer、
 `-march` 或 C/C++ 语言标准选项。
 
@@ -207,7 +207,7 @@ make NPU_QEMU_BIN=/path/to/compatible-qemu
 不提供 QEMU 命令时，启动器使用构建时写入的 QEMU 路径，并等价执行：
 
 ```text
-deps/npu-qemu/build/dl-riscv64 \
+deps/QEMU/build/dl-riscv64 \
   -monitor null \
   -bios /workspace/npu-firmware/bl0/bootrom.elf \
   -machine dayan-v0 \
@@ -238,7 +238,7 @@ continue
 
 ```bash
 ./bin/dayan-emu -c 4 \
-  ./deps/npu-qemu/build/dl-riscv64 \
+  ./deps/QEMU/build/dl-riscv64 \
   -monitor null \
   -bios /path/to/npu-firmware/bl0/bootrom.elf \
   -machine dayan-v0 \
@@ -254,7 +254,7 @@ continue
 
 ```bash
 ./bin/dayan-emu \
-  ./deps/npu-qemu/build/dl-riscv64 \
+  ./deps/QEMU/build/dl-riscv64 \
   -monitor null \
   -bios /path/to/npu-firmware/bl0-noruntime/bootrom.elf \
   -kernel /path/to/npu-kernels/bin/kernels_pack.elf \
@@ -295,7 +295,7 @@ make test
 make clean
 ```
 
-`make clean` 不会删除 `deps/npu-qemu/build/`，因此下次构建仍会复用 QEMU 的
+`make clean` 不会删除 `deps/QEMU/build/`，因此下次构建仍会复用 QEMU 的
 增量产物。
 
 ## 常见问题

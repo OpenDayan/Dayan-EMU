@@ -7,7 +7,8 @@ TARGETS += $(BUILD_DIR)/macro_address_validation_test
 TARGETS += $(BUILD_DIR)/vec_sparse_memory_test
 TARGETS += $(BUILD_DIR)/vec_loop_execution_test
 CXXFLAGS ?= -std=c++20 -Wall -Wextra
-CPPFLAGS += -I../deps/npu-qemu/include
+QEMU_DIR ?= ../deps/QEMU
+CPPFLAGS += -I$(abspath $(QEMU_DIR))/include
 
 all: test
 
@@ -20,8 +21,8 @@ $(BUILD_DIR)/tensor_context_interrupt_test: tensor_context_interrupt_test.cpp ..
 
 MMU_CORE_OBJ := $(BUILD_DIR)/dayan_mmu_core.o
 
-$(MMU_CORE_OBJ): ../deps/npu-qemu/hw/riscv/dayan_mmu_core.c \
-                 ../deps/npu-qemu/include/hw/riscv/dayan_mmu_core.h
+$(MMU_CORE_OBJ): $(QEMU_DIR)/hw/riscv/dayan_mmu_core.c \
+                 $(QEMU_DIR)/include/hw/riscv/dayan_mmu_core.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 

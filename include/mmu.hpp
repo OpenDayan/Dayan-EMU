@@ -9,7 +9,7 @@
 #include <vector>
 
 // The behavioral ClusterMMU implementation lives in the shared C core
-// hw/riscv/dayan_mmu_core.c (built from deps/npu-qemu and also linked by
+// hw/riscv/dayan_mmu_core.c (built from deps/QEMU and also linked by
 // the QEMU device).  This class is a C++ shell over it: per-instance
 // thread safety, the std::function PTE-reader bridge and the Dayan-emu-side
 // enum/result surface.  The access, fault, page-size and PTE-response

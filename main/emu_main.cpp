@@ -11,7 +11,7 @@
 static constexpr size_t kUramBytesPerCore = 1536 * 1024;
 
 #ifndef DAYAN_DEFAULT_QEMU
-#define DAYAN_DEFAULT_QEMU "deps/npu-qemu/build/dl-riscv64"
+#define DAYAN_DEFAULT_QEMU "deps/QEMU/build/dl-riscv64"
 #endif
 
 /*
@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
             printf("\nNote: If both -c and -smp are specified, -c takes precedence.\n");
             printf("\nExamples:\n");
             printf("  %s -c 4\n", argv[0]);
-            printf("  %s -c 4 /workspace/npu-qemu/build/dl-riscv64 -monitor null ...\n", argv[0]);
+            printf("  %s -c 4 ./deps/QEMU/build/dl-riscv64 -monitor null ...\n", argv[0]);
             return 0;
         }
     }

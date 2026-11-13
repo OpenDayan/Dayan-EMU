@@ -7,18 +7,18 @@ BUILD_DIR := build
 OUTPUT_DIR := bin
 LSU_DMA_TEST := $(BUILD_DIR)/lsu_dma_test
 MAT_TEST := $(BUILD_DIR)/mat_test
-NPU_QEMU_DIR ?= deps/npu-qemu
-NPU_QEMU_BIN ?= $(NPU_QEMU_DIR)/build/dl-riscv64
-NPU_QEMU_JOBS ?= 16
-NPU_QEMU_ENV := env -u CC -u CXX -u AR -u CFLAGS -u CXXFLAGS \
+QEMU_DIR ?= deps/QEMU
+QEMU_BIN ?= $(QEMU_DIR)/build/dl-riscv64
+QEMU_JOBS ?= 16
+QEMU_ENV := env -u CC -u CXX -u AR -u CFLAGS -u CXXFLAGS \
 	-u CPPFLAGS -u LDFLAGS -u CROSS_COMPILE -u BUILD_TYPE
-# Shared ClusterMMU behavioral core, owned by the npu-qemu tree and also
+# Shared ClusterMMU behavioral core, owned by the QEMU tree and also
 # linked into this emulator.
-MMU_CORE_SRC := $(NPU_QEMU_DIR)/hw/riscv/dayan_mmu_core.c
-MMU_CORE_HDR := $(NPU_QEMU_DIR)/include/hw/riscv/dayan_mmu_core.h
+MMU_CORE_SRC := $(QEMU_DIR)/hw/riscv/dayan_mmu_core.c
+MMU_CORE_HDR := $(QEMU_DIR)/include/hw/riscv/dayan_mmu_core.h
 MMU_CORE_OBJ := $(BUILD_DIR)/dayan_mmu_core.o
 
-.PHONY: all clean distclean help test deps qemu force-npu-qemu-build $(SUB_DIRS)
+.PHONY: all clean distclean help test deps qemu force-qemu-build $(SUB_DIRS)
 
 # 构建类型: Release（默认） / Debug
 BUILD_TYPE ?= Release
@@ -47,8 +47,8 @@ $(error Unknown BUILD_TYPE: $(BUILD_TYPE). Use Debug or Release)
 endif
 
 CPPFLAGS ?= -I./include -I./emu -I./main -I./utils
-CPPFLAGS += -I$(abspath $(NPU_QEMU_DIR))/include
-CPPFLAGS += -DDAYAN_DEFAULT_QEMU=\"$(abspath $(NPU_QEMU_BIN))\"
+CPPFLAGS += -I$(abspath $(QEMU_DIR))/include
+CPPFLAGS += -DDAYAN_DEFAULT_QEMU=\"$(abspath $(QEMU_BIN))\"
 
 # 导出变量到子 Makefile
 export CC CXX AR CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CROSS_COMPILE BUILD_TYPE
@@ -71,30 +71,30 @@ test: $(BUILD_DIR) $(MMU_CORE_OBJ)
 	$(LSU_DMA_TEST)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I./include tests/mat_test.cpp emu/mat.cpp utils/interrupt.cpp $(LDFLAGS) -o $(MAT_TEST)
 	$(MAT_TEST)
-	$(MAKE) -C tests BUILD_DIR=../$(BUILD_DIR)/tests test
+	$(MAKE) -C tests BUILD_DIR=../$(BUILD_DIR)/tests QEMU_DIR="$(abspath $(QEMU_DIR))" test
 
 deps:
 	git submodule update --init --recursive
 
-qemu: $(NPU_QEMU_BIN)
+qemu: $(QEMU_BIN)
 
-ifeq ($(abspath $(NPU_QEMU_BIN)),$(abspath $(NPU_QEMU_DIR)/build/dl-riscv64))
-$(NPU_QEMU_BIN): force-npu-qemu-build
+ifeq ($(abspath $(QEMU_BIN)),$(abspath $(QEMU_DIR)/build/dl-riscv64))
+$(QEMU_BIN): force-qemu-build
 endif
 
-force-npu-qemu-build:
+force-qemu-build:
 
-$(NPU_QEMU_BIN):
-	@if [ ! -f "$(NPU_QEMU_DIR)/configure" ]; then \
-		echo "Missing $(NPU_QEMU_DIR). Run 'make deps' first."; \
+$(QEMU_BIN):
+	@if [ ! -f "$(QEMU_DIR)/configure" ]; then \
+		echo "Missing $(QEMU_DIR). Run 'make deps' first."; \
 		exit 1; \
 	fi
-	mkdir -p $(NPU_QEMU_DIR)/build
-	@if [ ! -f "$(NPU_QEMU_DIR)/build/config-host.mak" ]; then \
-		cd $(NPU_QEMU_DIR)/build && $(NPU_QEMU_ENV) \
+	mkdir -p $(QEMU_DIR)/build
+	@if [ ! -f "$(QEMU_DIR)/build/config-host.mak" ]; then \
+		cd $(QEMU_DIR)/build && $(QEMU_ENV) \
 			../configure --target-list=riscv64-softmmu; \
 	fi
-	$(NPU_QEMU_ENV) $(MAKE) -C $(NPU_QEMU_DIR)/build -j$(NPU_QEMU_JOBS)
+	$(QEMU_ENV) $(MAKE) -C $(QEMU_DIR)/build -j$(QEMU_JOBS)
 
 # 创建构建目录
 $(BUILD_DIR):
@@ -128,7 +128,7 @@ help:
 	@echo "  all       - Build the project (default)"
 	@echo "  test      - Build and run unit tests"
 	@echo "  deps      - Initialize git submodules"
-	@echo "  qemu      - Configure and build deps/npu-qemu"
+	@echo "  qemu      - Configure and build deps/QEMU"
 	@echo "  clean     - Remove object files and temporary files"
 	@echo "  distclean - Remove all generated files"
 	@echo "  help      - Show this help message"
