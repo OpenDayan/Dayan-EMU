@@ -105,9 +105,9 @@ Runtime 暴露：
   配置为 32 GiB；Docker 默认的 64 MiB 不够。
 - 当前用户需要能够访问 `/dev/fuse`，并能在 `/tmp/virtual_npu` 上挂载 FUSE。
 
-本仓库不包含 Boot ROM、Runtime 或测试 Kernel。运行完整软件栈时，还需要由
-`npu-firmware`、`npu-kernels` 等仓库提供相应 ELF 产物；下文使用路径占位符说明
-如何传入这些文件。
+本仓库不包含 Boot ROM、Runtime 或测试 Kernel。运行完整软件栈时，可使用
+`dayan-base` 提供的 Boot ROM 与 Runtime，以及单独编译的 Kernel ELF；下文使用
+相对路径和占位符说明如何传入这些文件。
 
 Ubuntu/Debian 可先安装一组基础依赖：
 
@@ -209,7 +209,7 @@ make QEMU_BIN=/path/to/compatible-qemu
 ```text
 deps/QEMU/build/dl-riscv64 \
   -monitor null \
-  -bios /workspace/npu-firmware/bl0/bootrom.elf \
+  -bios ../dayan-base/device/bl0/bootrom.elf \
   -machine dayan-v0 \
   -nographic \
   -m 4096 \
@@ -217,8 +217,9 @@ deps/QEMU/build/dl-riscv64 \
   -S -s
 ```
 
-因此默认模式要求 Boot ROM 位于上述固定路径，并会暂停 CPU、在 TCP 1234 端口
-等待 GDB：
+默认 Boot ROM 路径相对于启动时的当前工作目录解析；从本仓库根目录启动时，
+默认使用同级 `dayan-base` 仓库中 `device/bl0/bootrom.elf` 的 Boot ROM。默认模式会暂停 CPU、在 TCP 1234
+端口等待 GDB：
 
 ```bash
 ./bin/dayan-emu          # 1 Core
@@ -240,7 +241,7 @@ continue
 ./bin/dayan-emu -c 4 \
   ./deps/QEMU/build/dl-riscv64 \
   -monitor null \
-  -bios /path/to/npu-firmware/bl0/bootrom.elf \
+  -bios /path/to/dayan-base/device/bl0/bootrom.elf \
   -machine dayan-v0 \
   -nographic \
   -m 4096
@@ -256,7 +257,7 @@ continue
 ./bin/dayan-emu \
   ./deps/QEMU/build/dl-riscv64 \
   -monitor null \
-  -bios /path/to/npu-firmware/bl0-noruntime/bootrom.elf \
+  -bios /path/to/standalone-bootrom.elf \
   -kernel /path/to/npu-kernels/bin/kernels_pack.elf \
   -machine dayan-v0 \
   -nographic \
@@ -307,7 +308,7 @@ make clean
 
 ### 默认启动找不到 Boot ROM
 
-默认路径是 `/workspace/npu-firmware/bl0/bootrom.elf`。如果目录布局不同，请使用
+默认路径是 `../dayan-base/device/bl0/bootrom.elf`。如果目录布局不同，请使用
 “自定义固件路径”中的完整 QEMU 命令。
 
 ### FUSE 挂载失败

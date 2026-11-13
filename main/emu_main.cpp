@@ -257,7 +257,7 @@ int main(int argc, char** argv) {
         if(qemu_arg_start >= argc) {// Default debug mode (no QEMU arguments provided)
             // Default mode: automatically add -smp parameter
             execlp(DAYAN_DEFAULT_QEMU, "QEMU_THREAD", "-monitor", "null",
-            "-bios", "/workspace/npu-firmware/bl0/bootrom.elf",
+            "-bios", "../dayan-base/device/bl0/bootrom.elf",
             "-machine", "dayan-v0", "-nographic", "-m", "4096",
             "-smp", smp_arg.c_str(), "-S", "-s", NULL);
             perror("failed to exec default QEMU backend");
