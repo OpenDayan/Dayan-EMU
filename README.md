@@ -1,6 +1,6 @@
 # Dayan-emu
 
-Dayan-emu 是 Dayan NPU 的功能级模拟器。它与仓库内定制的
+Dayan-emu 是 Dayan 的功能级模拟器。它与仓库内定制的
 `QEMU` 配合运行：QEMU 负责 RISC-V 标量核、固件启动、SoC 外设和 Host
 接口，Dayan-emu 负责张量指令的取指、分发与 LSU/MAT/VEC/MACRO 功能执行。
 
@@ -29,7 +29,7 @@ flowchart LR
         FUSE <--> SoC
     end
 
-    subgraph DAYAN_EMU[dayan-emu 主进程：张量后端]
+    subgraph DAYAN_EMU[Dayan-emu 主进程：张量后端]
         Fetch[IPC 取指与提交]
         Dispatch[Core Context / 指令分发]
         Units[LSU · MAT · VEC · RVT64/MACRO]
@@ -76,7 +76,7 @@ IPC Socket 和共享内存名称目前固定为 `card0`/上述名称，因此同
 ### QEMU 侧平台
 
 子模块中的 `dayan-v0` Machine 提供 RISC-V Hart、Boot ROM、Mailbox、
-NPU-to-Host Interrupt Handler、Dayan CLINT、Atomic Cache 窗口、每 Core URAM
+Dayan-to-Host Interrupt Handler、Dayan CLINT、Atomic Cache 窗口、每 Core URAM
 和共享 DRAM。QEMU 还会在 `/tmp/virtual_npu/` 挂载 FUSE 文件系统，向 Host
 Runtime 暴露：
 
@@ -258,7 +258,7 @@ continue
   ./deps/QEMU/build/dl-riscv64 \
   -monitor null \
   -bios /path/to/standalone-bootrom.elf \
-  -kernel /path/to/npu-kernels/bin/kernels_pack.elf \
+  -kernel /path/to/kernels_pack.elf \
   -machine dayan-v0 \
   -nographic \
   -m 4096 \

@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("DAYAN Emulator: Using %d cores\n", num_cores);
+    printf("Dayan-emu: Using %d cores\n", num_cores);
 
     size_t dram_size = DAYAN::MMU_DEFAULT_DRAM_SIZE;
     if (const char *memory_mib = getenv("DAYAN_EMU_MEMORY_MIB")) {
