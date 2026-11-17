@@ -371,14 +371,17 @@ static std::vector<float> decode_conv_input(
     uint64_t input,
     const mat_operand_format_t& format,
     uint64_t scaleBase) {
-    std::vector<float> values(tcsr.hi * tcsr.wi * tcsr.c);
-    for (uint64_t hi = 0; hi < tcsr.hi; ++hi) {
-        for (uint64_t wi = 0; wi < tcsr.wi; ++wi) {
+    const uint64_t hiCount = tcsr.hi + 1;
+    const uint64_t wiCount = tcsr.wi + 1;
+    const uint64_t ciCount = tcsr.c + 1;
+    std::vector<float> values(hiCount * wiCount * ciCount);
+    for (uint64_t hi = 0; hi < hiCount; ++hi) {
+        for (uint64_t wi = 0; wi < wiCount; ++wi) {
             const uint64_t source = input + hi * tcsr.hiStride + wi * tcsr.wiStride;
-            float* destination = values.data() + (hi * tcsr.wi + wi) * tcsr.c;
+            float* destination = values.data() + (hi * wiCount + wi) * ciCount;
             const uint64_t scaleRow = scaleBase +
                 hi * tcsr.scaleHiStride + wi * tcsr.scaleWiStride;
-            decode_row(uram, source, tcsr.iSwizzleMBS, 0, tcsr.c,
+            decode_row(uram, source, tcsr.iSwizzleMBS, 0, ciCount,
                        format, scaleRow, destination);
         }
     }
@@ -391,16 +394,20 @@ static std::vector<float> decode_conv_kernel(
     uint64_t kernel,
     const mat_operand_format_t& format,
     uint64_t scaleBase) {
-    std::vector<float> values(tcsr.hk * tcsr.wk * tcsr.co * tcsr.c);
-    for (uint64_t hk = 0; hk < tcsr.hk; ++hk) {
-        for (uint64_t wk = 0; wk < tcsr.wk; ++wk) {
-            for (uint64_t co = 0; co < tcsr.co; ++co) {
+    const uint64_t hkCount = tcsr.hk + 1;
+    const uint64_t wkCount = tcsr.wk + 1;
+    const uint64_t coCount = tcsr.co + 1;
+    const uint64_t ciCount = tcsr.c + 1;
+    std::vector<float> values(hkCount * wkCount * coCount * ciCount);
+    for (uint64_t hk = 0; hk < hkCount; ++hk) {
+        for (uint64_t wk = 0; wk < wkCount; ++wk) {
+            for (uint64_t co = 0; co < coCount; ++co) {
                 const uint64_t source = kernel + hk * tcsr.hkStride + wk * tcsr.wkStride + co * tcsr.coStride;
-                float* destination = values.data() + ((hk * tcsr.wk + wk) * tcsr.co + co) * tcsr.c;
+                float* destination = values.data() + ((hk * wkCount + wk) * coCount + co) * ciCount;
                 const uint64_t scaleRow = scaleBase +
                     hk * tcsr.scaleHkStride + wk * tcsr.scaleWkStride +
                     co * tcsr.scaleCoStride;
-                decode_row(uram, source, tcsr.kSwizzleMBS, 0, tcsr.c,
+                decode_row(uram, source, tcsr.kSwizzleMBS, 0, ciCount,
                            format, scaleRow, destination);
             }
         }
@@ -498,35 +505,43 @@ bool execute_conv2d(
         return false;
     }
 
+    const uint64_t ciCount = tcsr.c + 1;
+    const uint64_t wiCount = tcsr.wi + 1;
+    const uint64_t hiCount = tcsr.hi + 1;
+    const uint64_t woCount = tcsr.wo + 1;
+    const uint64_t hoCount = tcsr.ho + 1;
+    const uint64_t wkCount = tcsr.wk + 1;
+    const uint64_t hkCount = tcsr.hk + 1;
+    const uint64_t coCount = tcsr.co + 1;
     debugf("MAT: Calculating A=%s B=%s Conv Hi%lu Wi%lu Ci%lu Hk%lu Wk%lu Ho%lu Wo%lu Co%lu\n",
-           formats->a.name, formats->b.name, tcsr.hi, tcsr.wi, tcsr.c,
-           tcsr.hk, tcsr.wk, tcsr.ho, tcsr.wo, tcsr.co);
+           formats->a.name, formats->b.name, hiCount, wiCount, ciCount,
+           hkCount, wkCount, hoCount, woCount, coCount);
     const std::vector<float> inputValues = decode_conv_input(
         uram, tcsr, input, formats->a, inputScale);
     const std::vector<float> kernelValues = decode_conv_kernel(
         uram, tcsr, kernel, formats->b, kernelScale);
-    for (uint64_t ho = 0; ho < tcsr.ho; ++ho) {
-        for (uint64_t wo = 0; wo < tcsr.wo; ++wo) {
-            for (uint64_t co = 0; co < tcsr.co; ++co) {
+    for (uint64_t ho = 0; ho < hoCount; ++ho) {
+        for (uint64_t wo = 0; wo < woCount; ++wo) {
+            for (uint64_t co = 0; co < coCount; ++co) {
                 const uint64_t outputAddress = output + ho * tcsr.hoStride + wo * tcsr.woStride + co * sizeof(float);
                 float sum = acc ? load_uram<float>(uram, outputAddress, tcsr.oSwizzleMBS) : 0.0f;
-                for (uint64_t hk = 0; hk < tcsr.hk; ++hk) {
+                for (uint64_t hk = 0; hk < hkCount; ++hk) {
                     const int64_t hi = static_cast<int64_t>(ho * tcsr.strideH + hk * tcsr.dilationH) -
                         static_cast<int64_t>(tcsr.padU);
-                    if (hi < 0 || static_cast<uint64_t>(hi) >= tcsr.hi) {
+                    if (hi < 0 || static_cast<uint64_t>(hi) >= hiCount) {
                         continue;
                     }
-                    for (uint64_t wk = 0; wk < tcsr.wk; ++wk) {
+                    for (uint64_t wk = 0; wk < wkCount; ++wk) {
                         const int64_t wi = static_cast<int64_t>(wo * tcsr.strideW + wk * tcsr.dilationW) -
                             static_cast<int64_t>(tcsr.padL);
-                        if (wi < 0 || static_cast<uint64_t>(wi) >= tcsr.wi) {
+                        if (wi < 0 || static_cast<uint64_t>(wi) >= wiCount) {
                             continue;
                         }
                         const float* inputRow = inputValues.data() +
-                            (static_cast<uint64_t>(hi) * tcsr.wi + static_cast<uint64_t>(wi)) * tcsr.c;
+                            (static_cast<uint64_t>(hi) * wiCount + static_cast<uint64_t>(wi)) * ciCount;
                         const float* kernelRow = kernelValues.data() +
-                            ((hk * tcsr.wk + wk) * tcsr.co + co) * tcsr.c;
-                        sum = dot_product_contiguous(sum, inputRow, kernelRow, tcsr.c);
+                            ((hk * wkCount + wk) * coCount + co) * ciCount;
+                        sum = dot_product_contiguous(sum, inputRow, kernelRow, ciCount);
                     }
                 }
                 store_uram<float>(uram, outputAddress, tcsr.oSwizzleMBS, sum);
@@ -680,10 +695,18 @@ bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
     if(!formats) {
         return true;
     }
+    const uint64_t ciCount = control.c + 1;
+    const uint64_t wiCount = control.wi + 1;
+    const uint64_t hiCount = control.hi + 1;
+    const uint64_t woCount = control.wo + 1;
+    const uint64_t hoCount = control.ho + 1;
+    const uint64_t wkCount = control.wk + 1;
+    const uint64_t hkCount = control.hk + 1;
+    const uint64_t coCount = control.co + 1;
     const uint64_t inputTail = packed_row_bytes(
-        control.c, formats->a.bitsPerElement);
+        ciCount, formats->a.bitsPerElement);
     const uint64_t kernelTail = packed_row_bytes(
-        control.c, formats->b.bitsPerElement);
+        ciCount, formats->b.bitsPerElement);
     const auto checkRegions = [this](
         uint64_t base,
         uint64_t count0, uint64_t stride0,
@@ -714,27 +737,27 @@ bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
     };
 
     if(!checkRegions(input,
-                     control.hi, control.hiStride,
-                     control.wi, control.wiStride,
+                     hiCount, control.hiStride,
+                     wiCount, control.wiStride,
                      1, 0,
                      inputTail, control.iSwizzleMBS,
                      interrupt_source_t::neomat_uram_a_read_range,
                      interrupt_source_t::neomat_uram_a_read_align) ||
        !checkRegions(kernel,
-                     control.hk, control.hkStride,
-                     control.wk, control.wkStride,
-                     control.co, control.coStride,
+                     hkCount, control.hkStride,
+                     wkCount, control.wkStride,
+                     coCount, control.coStride,
                      kernelTail, control.kSwizzleMBS,
                      interrupt_source_t::neomat_uram_b_read_range,
                      interrupt_source_t::neomat_uram_b_read_align)) {
         return false;
     }
     const uint64_t scaleTail =
-        (control.c + kMXScaleGroupK - 1) / kMXScaleGroupK;
+        (ciCount + kMXScaleGroupK - 1) / kMXScaleGroupK;
     if(formats->a.usesScale &&
        !checkRegions(input_scale,
-                     control.hi, control.scaleHiStride,
-                     control.wi, control.scaleWiStride,
+                     hiCount, control.scaleHiStride,
+                     wiCount, control.scaleWiStride,
                      1, 0, scaleTail, 0,
                      interrupt_source_t::neomat_uram_scale_read_range,
                      interrupt_source_t::neomat_uram_scale_read_align)) {
@@ -742,28 +765,28 @@ bool mat_t::validate_conv_accesses(const conv_tcsr_t& control,
     }
     if(formats->b.usesScale &&
        !checkRegions(kernel_scale,
-                     control.hk, control.scaleHkStride,
-                     control.wk, control.scaleWkStride,
-                     control.co, control.scaleCoStride,
+                     hkCount, control.scaleHkStride,
+                     wkCount, control.scaleWkStride,
+                     coCount, control.scaleCoStride,
                      scaleTail, 0,
                      interrupt_source_t::neomat_uram_scale_read_range,
                      interrupt_source_t::neomat_uram_scale_read_align)) {
         return false;
     }
     if(acc && !checkRegions(output,
-                            control.ho, control.hoStride,
-                            control.wo, control.woStride,
+                            hoCount, control.hoStride,
+                            woCount, control.woStride,
                             1, 0,
-                            control.co * sizeof(float), control.oSwizzleMBS,
+                            coCount * sizeof(float), control.oSwizzleMBS,
                             interrupt_source_t::neomat_uram_c_read_range,
                             interrupt_source_t::neomat_uram_c_read_align)) {
         return false;
     }
     return checkRegions(output,
-                        control.ho, control.hoStride,
-                        control.wo, control.woStride,
+                        hoCount, control.hoStride,
+                        woCount, control.woStride,
                         1, 0,
-                        control.co * sizeof(float), control.oSwizzleMBS,
+                        coCount * sizeof(float), control.oSwizzleMBS,
                         interrupt_source_t::neomat_uram_c_write_range,
                         interrupt_source_t::neomat_uram_c_write_align);
 }
