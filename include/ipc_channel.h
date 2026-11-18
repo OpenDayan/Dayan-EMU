@@ -29,6 +29,8 @@ extern "C" {
 #include <string.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #ifndef DAYAN_SOCKET_TYPE
 #define DAYAN_SOCKET_TYPE SOCK_SEQPACKET
@@ -39,6 +41,26 @@ static inline void dayan_socket_tune(int sockfd) {
 
     setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &buf_sz, sizeof(buf_sz));
     setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &buf_sz, sizeof(buf_sz));
+}
+
+/* Keep all simulator socket names in one optional private per-run directory. */
+static inline int dayan_socket_address(struct sockaddr_un* addr, const char* path) {
+    const char* dir = getenv("DAYAN_EMU_IPC_DIR");
+    const char* basename = strrchr(path, '/');
+    int len;
+    memset(addr, 0, sizeof(*addr));
+    addr->sun_family = AF_UNIX;
+    if (dir && *dir) {
+        len = snprintf(addr->sun_path, sizeof(addr->sun_path), "%s/%s", dir,
+                       basename ? basename + 1 : path);
+    } else {
+        len = snprintf(addr->sun_path, sizeof(addr->sun_path), "%s", path);
+    }
+    if (len < 0 || (size_t)len >= sizeof(addr->sun_path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return 0;
 }
 
 /* 服务器初始化 - 创建监听Unix socket并接受连接 */
@@ -52,13 +74,12 @@ static inline int dayan_socket_server_init(const char* socket_path) {
     }
     dayan_socket_tune(server_fd);
     
-    /* 删除可能已存在的socket文件 */
-    unlink(socket_path);
-    
-    /* 绑定地址 */
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sun_family = AF_UNIX;
-    strncpy(server_addr.sun_path, socket_path, sizeof(server_addr.sun_path) - 1);
+    if (dayan_socket_address(&server_addr, socket_path) < 0) {
+        close(server_fd);
+        return -1;
+    }
+    /* The caller must provide a private IPC directory when isolation is needed. */
+    unlink(server_addr.sun_path);
     
     if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         close(server_fd);
@@ -93,10 +114,10 @@ static inline int dayan_socket_client_init(const char* socket_path) {
     }
     dayan_socket_tune(sockfd);
     
-    /* 设置服务器地址 */
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sun_family = AF_UNIX;
-    strncpy(server_addr.sun_path, socket_path, sizeof(server_addr.sun_path) - 1);
+    if (dayan_socket_address(&server_addr, socket_path) < 0) {
+        close(sockfd);
+        return -1;
+    }
     
     /* 连接服务器 */
     if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
@@ -158,7 +179,10 @@ static inline int dayan_socket_pop(int sockfd, uint64_t* data) {
 
 /* 清理函数 - 删除socket文件 */
 static inline void dayan_cleanup_socket(const char* socket_path) {
-    unlink(socket_path);
+    struct sockaddr_un address;
+    if (dayan_socket_address(&address, socket_path) == 0) {
+        unlink(address.sun_path);
+    }
 }
 
 #ifdef __cplusplus

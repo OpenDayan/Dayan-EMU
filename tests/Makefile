@@ -22,6 +22,7 @@ TARGETS += $(BUILD_DIR)/resource_scheduler_test $(BUILD_DIR)/resource_integratio
 TARGETS += $(BUILD_DIR)/macro_address_validation_test
 TARGETS += $(BUILD_DIR)/vec_sparse_memory_test
 TARGETS += $(BUILD_DIR)/vec_loop_execution_test
+TARGETS += $(BUILD_DIR)/shared_mapping_test
 CXXFLAGS ?= -std=c++20 -Wall -Wextra
 QEMU_DIR ?= ../deps/QEMU
 CPPFLAGS += -I$(abspath $(QEMU_DIR))/include
@@ -30,6 +31,10 @@ all: test
 
 test: $(TARGETS)
 	@for target in $(TARGETS); do $$target || exit $$?; done
+
+$(BUILD_DIR)/shared_mapping_test: shared_mapping_test.cpp ../include/dayan-intf.h ../include/ipc_channel.h
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -I../include $< -o $@
 
 $(BUILD_DIR)/tensor_context_interrupt_test: tensor_context_interrupt_test.cpp ../utils/interrupt.cpp ../include/tensor_context.hpp ../include/interrupt.hpp
 	@mkdir -p $(BUILD_DIR)

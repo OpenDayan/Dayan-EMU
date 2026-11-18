@@ -326,6 +326,17 @@ fusermount3 -u /tmp/virtual_npu
 排查 Boot ROM、`dayan-v0` Machine、FUSE 权限和共享内存配置。固定 Socket 名称
 也意味着不能并发启动两个实例。
 
+### 使用文件映射替代 POSIX 共享内存
+
+默认仍使用 `/dev/shm` 下的 POSIX 共享内存。设置 `DAYAN_EMU_SHM_DIR` 后，模拟器
+和 QEMU 改为在该目录下用普通文件共享 DRAM 和 URAM，可避开 `/dev/shm` 的容量
+限制。该目录由启动脚本或用户自行创建，模拟器与所选 QEMU 必须包含文件映射支持
+并使用相同的 `DAYAN_EMU_SHM_DIR`；退出时由创建方清理目录。文件使用稀疏分配，
+运行前应检查该目录所在文件系统的剩余空间；空间耗尽仍可能引起 SIGBUS。可通过
+`DAYAN_EMU_IPC_DIR` 为模拟器与 QEMU 指定相同的私有 IPC socket 目录；未设置时
+仍使用 `/tmp` 下的固定名称。不同实例还需各自独立的设备挂载目录和 server
+socket。
+
 ### 清除上次运行留下的共享内存
 
 共享内存对象不会在正常主循环中主动删除。确认没有模拟器进程正在使用它们后，

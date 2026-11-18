@@ -233,7 +233,14 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Error: failed to create shared DRAM\n");
         return 1;
     }
-    printf("Note: If the emulator fails to start with SIGBUS signal, it means Shared Memory is not properly created.\nPlease run: sudo mount -o remount,size=32G /dev/shm\n");
+    const char* shm_dir = getenv("DAYAN_EMU_SHM_DIR");
+    printf("Note: If the emulator fails to start with SIGBUS signal, it means Shared Memory is not properly created.\n");
+    if (!shm_dir || !*shm_dir) {
+        printf("Please run: sudo mount -o remount,size=32G /dev/shm\n");
+    } else {
+        printf("Please ensure %s has enough free space for the file-backed mappings.\n",
+               shm_dir);
+    }
     dram[dram_size - 1] = 0x0; // Check Shared DRAM Status
 
     uint8_t* uram[num_cores];

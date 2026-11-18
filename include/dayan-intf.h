@@ -180,12 +180,54 @@ static inline void* frontend_serve_inst_loop(void* arg) {
     return NULL;
 }
 
+// File-backed mappings are opt-in; the caller owns their private directory.
+static inline int dayan_file_shm_enabled(void) {
+    const char* dir = getenv("DAYAN_EMU_SHM_DIR");
+    return dir && dir[0];
+}
+
+static inline int dayan_file_shm_name_valid(const char* name) {
+    if (!name) {
+        return 0;
+    }
+    if (strcmp(name, "/dram_shm_0") == 0) {
+        return 1;
+    }
+    if (strncmp(name, "/uram_shm_", 10) != 0 || !name[10]) {
+        return 0;
+    }
+    for (const char* p = name + 10; *p; ++p) {
+        if (*p < '0' || *p > '9') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static inline int dayan_mapping_open(const char* name, int create) {
+    const char* dir = getenv("DAYAN_EMU_SHM_DIR");
+    if (!dir || !*dir) {
+        return shm_open(name, create ? O_CREAT | O_RDWR : O_RDWR, 0666);
+    }
+    if (!dayan_file_shm_name_valid(name)) {
+        errno = EINVAL;
+        return -1;
+    }
+    int dir_fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir_fd < 0) return -1;
+    int fd = openat(dir_fd, name + 1,
+                    O_RDWR | O_CLOEXEC | O_NOFOLLOW | (create ? O_CREAT | O_EXCL : 0), 0600);
+    int saved_errno = errno;
+    close(dir_fd);
+    errno = saved_errno;
+    return fd;
+}
+
 // backend端：创建共享内存区域
 static inline void* backend_get_shm_ptr(const char* shm_name, size_t sz) {
-    // 创建共享内存对象
-    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+    int shm_fd = dayan_mapping_open(shm_name, 1);
     if (shm_fd == -1) {
-        perror("shm_open failed");
+        perror("open shared memory failed");
         return NULL;
     }
     
@@ -212,14 +254,16 @@ static inline void* backend_get_shm_ptr(const char* shm_name, size_t sz) {
 }
 
 // frontend端：打开已创建的共享内存
-static inline void* frontend_get_shm_ptr(const char* shm_name) {
+static inline void* frontend_get_shm_ptr_sized(const char* shm_name,
+                                               size_t minimum_size) {
+    const int file_mode = dayan_file_shm_enabled();
     // 打开已存在的共享内存对象
-    int shm_fd = shm_open(shm_name, O_RDWR, 0666);
+    int shm_fd = dayan_mapping_open(shm_name, 0);
     if (shm_fd == -1) {
-        perror("shm_open failed");
+        perror("open shared memory failed");
         return NULL;
     }
-    
+
     // 获取共享内存大小
     struct stat sb;
     if (fstat(shm_fd, &sb) == -1) {
@@ -227,8 +271,16 @@ static inline void* frontend_get_shm_ptr(const char* shm_name) {
         close(shm_fd);
         return NULL;
     }
+    if (file_mode && (!S_ISREG(sb.st_mode) || sb.st_size < 0 ||
+                      (uint64_t)sb.st_size < minimum_size ||
+                      (uint64_t)sb.st_size > SIZE_MAX)) {
+        fprintf(stderr, "Invalid or undersized shared memory file '%s'\n",
+                shm_name);
+        close(shm_fd);
+        return NULL;
+    }
     size_t sz = sb.st_size;
-    
+
     // 内存映射
     void* ptr = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (ptr == MAP_FAILED) {
@@ -239,17 +291,24 @@ static inline void* frontend_get_shm_ptr(const char* shm_name) {
     
     close(shm_fd); // 文件描述符可以关闭，映射仍然有效
     
-    debugf("Frontend: Opened shared memory '%s' with size %zu at %p\n", 
+    debugf("Frontend: Opened shared memory '%s' with size %zu at %p\n",
            shm_name, sz, ptr);
     return ptr;
+}
+
+static inline void* frontend_get_shm_ptr(const char* shm_name) {
+    return frontend_get_shm_ptr_sized(shm_name, 0);
 }
 
 // 清理共享内存（可选）
 static inline void cleanup_shm_ptr(const char* shm_name, void* ptr, size_t sz) {
     if (ptr && ptr != MAP_FAILED) {
         munmap(ptr, sz);
-    }    
-    shm_unlink(shm_name);
+    }
+    /* File-backed regions are owned and removed by their creator. */
+    if (!dayan_file_shm_enabled()) {
+        shm_unlink(shm_name);
+    }
     debugf("Cleaned up shared memory '%s'\n", shm_name);
 }
 static inline void* frontend_serve_msg_loop(void* arg) {
